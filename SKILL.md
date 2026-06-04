@@ -24,10 +24,21 @@ Prefer the helper script:
 python3 scripts/personal_autofill.py path
 python3 scripts/personal_autofill.py init --profile personal
 python3 scripts/personal_autofill.py show --profile personal
+python3 scripts/personal_autofill.py values --profile personal
+python3 scripts/personal_autofill.py values --profile personal contact.email address.postal_code
 python3 scripts/personal_autofill.py get --profile personal contact.email address.postal_code
 python3 scripts/personal_autofill.py set --profile personal address.postal_code "1000001"
 python3 scripts/personal_autofill.py list-fields --profile personal --filled
 ```
+
+### Redacted vs. raw: pick the right command
+
+This is the most important rule for autofill. Two output modes exist and they are not interchangeable:
+
+- **`values`** returns RAW values. Use it for every value you actually type into a form. With no fields it dumps all filled low/medium fields as a flat `{dotpath: value}` map ready to map onto form labels; it excludes high-sensitivity fields unless you name them or pass `--include-sensitive`.
+- **`show` / `get`** return REDACTED values by default (names, email, phone, address lines, card, bank, IDs, notes are masked). Use these only to orient or to report back to the user. Pass `--reveal` to unmask.
+
+NEVER type a redacted/masked value into a form. `get contact.email` returns `t***@example.com`; filling that breaks the registration. To fill, use `values contact.email` (or `get --reveal`). When in doubt for filling: use `values`.
 
 Default location order:
 
@@ -64,10 +75,10 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 
 1. Identify the form's site, purpose, and profile to use. Default to `personal` unless the user names another profile such as `work`, `family`, or `jp`.
 2. Inspect the form labels and required fields. Build a mapping from labels to profile paths; do not rely only on placeholder text.
-3. Read only the needed profile fields with the helper script. Start with redacted `show` when orienting; use `get` for exact fields.
-4. Fill low-sensitivity fields directly when the user asked for autofill. Examples: name, email, phone, address, postal code.
-5. For high-sensitivity fields, show a redacted summary and ask for confirmation before filling.
-6. Before submission, summarize the fields that were filled using redacted values and wait for an explicit submit approval.
+3. Orient with redacted `show` to see the shape, then read the exact values you will type with `values` (raw). Use `values` with no fields to get a flat map of all filled low/medium fields at once.
+4. Fill low-sensitivity fields directly when the user asked for autofill, using the raw `values` output. Examples: name, email, phone, address, postal code.
+5. For high-sensitivity fields (`payment`, `bank`, `government_id`, `tax`, birthdate, gender), show a redacted summary and ask for confirmation before filling; fetch the raw value with an explicit `values payment.card.number` only at the moment of filling.
+6. Before submission, summarize the fields that were filled using redacted `show`/`get` values and wait for an explicit submit approval.
 
 ## Field Mapping Hints
 
