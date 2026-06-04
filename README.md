@@ -24,6 +24,7 @@ npx skills add https://github.com/leeguooooo/personal-autofill
 ```bash
 python3 scripts/personal_autofill.py init --profile personal
 python3 scripts/personal_autofill.py path --profile personal
+python3 scripts/personal_autofill.py doctor --profile personal
 ```
 
 By default, the script uses iCloud Drive when available:
@@ -31,6 +32,8 @@ By default, the script uses iCloud Drive when available:
 ```text
 ~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill
 ```
+
+The script checks the iCloud Drive root and creates `Agent Profiles/personal-autofill` on first write. If iCloud Drive is unavailable, it falls back to `~/.config/personal-autofill`.
 
 Override the location with:
 

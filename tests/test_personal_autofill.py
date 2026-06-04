@@ -2,8 +2,11 @@
 """Smoke + redaction tests. Run: python3 tests/test_personal_autofill.py"""
 
 import importlib.util
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _SPEC = importlib.util.spec_from_file_location(
     "pa", Path(__file__).resolve().parents[1] / "scripts" / "personal_autofill.py"
@@ -57,6 +60,17 @@ class PathTests(unittest.TestCase):
     def test_empty_path_rejected(self):
         with self.assertRaises(ValueError):
             pa.set_path({}, "address..city", "x")
+
+    def test_default_dir_uses_icloud_root_even_before_agent_folder_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            icloud_root = home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+            icloud_root.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(pa.Path, "home", return_value=home):
+                self.assertEqual(
+                    pa.default_dir(),
+                    icloud_root / "Agent Profiles" / "personal-autofill",
+                )
 
 
 if __name__ == "__main__":
