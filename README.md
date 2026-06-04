@@ -50,7 +50,23 @@ Never commit plaintext profile data.
 python3 scripts/personal_autofill.py show --profile personal
 python3 scripts/personal_autofill.py get --profile personal contact.email address.postal_code
 python3 scripts/personal_autofill.py get --profile personal --reveal contact.email
+python3 scripts/personal_autofill.py set --profile personal contact.email "me@example.com"
+python3 scripts/personal_autofill.py set --profile personal preferences.marketing_opt_in false --json
+python3 scripts/personal_autofill.py unset --profile personal preferences.marketing_opt_in
+python3 scripts/personal_autofill.py list-fields --profile personal --filled
 python3 scripts/personal_autofill.py check --profile personal
 ```
 
 The default output is redacted. Use `--reveal` only when the current task truly needs exact values.
+
+## Adding information over time
+
+The profile is meant to grow during real registration work. When a site asks for a reusable field that is missing, add it with a dot path:
+
+```bash
+python3 scripts/personal_autofill.py set --profile personal identity.name_kana "..."
+python3 scripts/personal_autofill.py set --profile personal address.jp.prefecture "..."
+python3 scripts/personal_autofill.py set --profile personal invoice.receipt_name "..."
+```
+
+Use flexible nested paths for country-specific or site-specific fields. Do not save one-time codes, CAPTCHA text, temporary links, passwords, or session tokens.

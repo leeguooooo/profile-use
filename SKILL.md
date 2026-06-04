@@ -25,6 +25,8 @@ python3 scripts/personal_autofill.py path
 python3 scripts/personal_autofill.py init --profile personal
 python3 scripts/personal_autofill.py show --profile personal
 python3 scripts/personal_autofill.py get --profile personal contact.email address.postal_code
+python3 scripts/personal_autofill.py set --profile personal address.postal_code "1000001"
+python3 scripts/personal_autofill.py list-fields --profile personal --filled
 ```
 
 Default location order:
@@ -34,6 +36,29 @@ Default location order:
 3. `$HOME/.config/personal-autofill`
 
 Use `references/profile-template.json` for the editable shape. Use `references/profile-schema.json` for field names and sensitivity hints.
+
+## Growing The Profile
+
+Expect the profile to grow over time as real registrations reveal new fields. When a form asks for information that is not already in the profile:
+
+1. Ask the user for the value only if it is required for the current registration.
+2. Decide whether it is reusable. Save stable values such as alternate emails, shipping addresses, invoice names, furigana, company details, and country-specific address variants. Do not save one-time codes, session tokens, CAPTCHA text, temporary invitation links, or site passwords.
+3. Ask before writing high-sensitivity or newly invented field paths.
+4. Add the field with `set`:
+
+```bash
+python3 scripts/personal_autofill.py set --profile personal identity.name_kana "..."
+python3 scripts/personal_autofill.py set --profile personal address.jp.prefecture "..."
+python3 scripts/personal_autofill.py set --profile personal preferences.newsletter_opt_in false --json
+```
+
+5. Confirm with redacted reads:
+
+```bash
+python3 scripts/personal_autofill.py get --profile personal identity.name_kana address.jp.prefecture
+```
+
+Use flexible nested paths when a country, site, or tenant needs a special variant. Examples: `address.jp.*`, `address.us.*`, `contact.work_email`, `invoice.jp.qualified_invoice_name`.
 
 ## Fill Workflow
 
@@ -54,6 +79,8 @@ Use `references/profile-template.json` for the editable shape. Use `references/p
 - `bank.*`: bank transfer or withdrawal fields; always high sensitivity.
 - `government_id.*`, `tax.*`: identity verification fields; always high sensitivity.
 - `preferences.*`: marketing opt-in, locale, newsletter, and delivery preferences.
+- `invoice.*`: billing name, tax invoice name, receipt name, or business invoice details.
+- `site_overrides.<domain>.*`: a value required only by one service; use this sparingly.
 
 If a site has country-specific formatting rules, preserve the profile value unless the form rejects it. Normalize only after checking the visible validation message.
 

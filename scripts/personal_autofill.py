@@ -77,6 +77,58 @@ def get_path(data: dict[str, Any], dotted: str) -> Any:
     return current
 
 
+def set_path(data: dict[str, Any], dotted: str, value: Any) -> None:
+    parts = dotted.split(".")
+    if not parts or any(part == "" for part in parts):
+        raise ValueError(f"Invalid field path: {dotted}")
+    current: Any = data
+    for part in parts[:-1]:
+        if part not in current:
+            current[part] = {}
+        if not isinstance(current[part], dict):
+            raise ValueError(f"Cannot set nested field under non-object path: {part}")
+        current = current[part]
+    current[parts[-1]] = value
+
+
+def unset_path(data: dict[str, Any], dotted: str) -> bool:
+    parts = dotted.split(".")
+    if not parts or any(part == "" for part in parts):
+        raise ValueError(f"Invalid field path: {dotted}")
+    current: Any = data
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    if not isinstance(current, dict) or parts[-1] not in current:
+        return False
+    del current[parts[-1]]
+    return True
+
+
+def parse_value(raw: str, as_json: bool) -> Any:
+    if as_json:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Invalid JSON value: {exc}") from exc
+    return raw
+
+
+def iter_fields(data: Any, prefix: str = "") -> list[str]:
+    if not isinstance(data, dict):
+        return [prefix] if prefix else []
+    result: list[str] = []
+    for key in sorted(data):
+        path = f"{prefix}.{key}" if prefix else key
+        value = data[key]
+        if isinstance(value, dict):
+            result.extend(iter_fields(value, path))
+        else:
+            result.append(path)
+    return result
+
+
 def redact_value(path: str, value: Any) -> Any:
     if isinstance(value, dict):
         return {key: redact_value(f"{path}.{key}" if path else key, val) for key, val in value.items()}
@@ -147,6 +199,43 @@ def command_get(args: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+def command_set(args: argparse.Namespace) -> None:
+    data = load_profile(args.profile, args.directory)
+    value = parse_value(args.value, args.json)
+    try:
+        set_path(data, args.field, value)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    path = profile_path(args.profile, args.directory)
+    write_json(path, data)
+    print(json.dumps({"ok": True, "profile": args.profile, "field": args.field, "path": str(path)}, indent=2))
+
+
+def command_unset(args: argparse.Namespace) -> None:
+    data = load_profile(args.profile, args.directory)
+    try:
+        removed = unset_path(data, args.field)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    path = profile_path(args.profile, args.directory)
+    if removed:
+        write_json(path, data)
+    print(
+        json.dumps(
+            {"ok": removed, "profile": args.profile, "field": args.field, "path": str(path)},
+            indent=2,
+        )
+    )
+
+
+def command_list_fields(args: argparse.Namespace) -> None:
+    data = load_profile(args.profile, args.directory)
+    fields = iter_fields(data)
+    if args.filled:
+        fields = [field for field in fields if get_path(data, field) not in ("", None, [], {})]
+    print("\n".join(fields))
+
+
 def command_check(args: argparse.Namespace) -> None:
     data = load_profile(args.profile, args.directory)
     problems: list[str] = []
@@ -183,6 +272,23 @@ def build_parser() -> argparse.ArgumentParser:
     get.add_argument("--profile", default="personal")
     get.add_argument("--reveal", action="store_true", help="Show full values instead of redacted values.")
     get.set_defaults(func=command_get)
+
+    set_cmd = subparsers.add_parser("set", help="Set a dot-path field, creating nested objects as needed.")
+    set_cmd.add_argument("field")
+    set_cmd.add_argument("value")
+    set_cmd.add_argument("--profile", default="personal")
+    set_cmd.add_argument("--json", action="store_true", help="Parse the value as JSON instead of a string.")
+    set_cmd.set_defaults(func=command_set)
+
+    unset = subparsers.add_parser("unset", help="Remove a dot-path field.")
+    unset.add_argument("field")
+    unset.add_argument("--profile", default="personal")
+    unset.set_defaults(func=command_unset)
+
+    list_fields = subparsers.add_parser("list-fields", help="List available dot-path fields.")
+    list_fields.add_argument("--profile", default="personal")
+    list_fields.add_argument("--filled", action="store_true", help="Only list fields with non-empty values.")
+    list_fields.set_defaults(func=command_list_fields)
 
     check = subparsers.add_parser("check", help="Validate the profile shape lightly.")
     check.add_argument("--profile", default="personal")
