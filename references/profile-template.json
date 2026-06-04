@@ -1,0 +1,64 @@
+{
+  "profile_name": "personal",
+  "identity": {
+    "full_name": "",
+    "family_name": "",
+    "given_name": "",
+    "middle_name": "",
+    "preferred_name": "",
+    "birthdate": "",
+    "gender": ""
+  },
+  "contact": {
+    "email": "",
+    "phone_country_code": "",
+    "phone": "",
+    "alternate_email": ""
+  },
+  "address": {
+    "country": "",
+    "region": "",
+    "city": "",
+    "ward_or_district": "",
+    "line1": "",
+    "line2": "",
+    "postal_code": ""
+  },
+  "payment": {
+    "card": {
+      "holder_name": "",
+      "number": "",
+      "expiry_month": "",
+      "expiry_year": "",
+      "cvv": "",
+      "billing_address_same_as_profile": true
+    }
+  },
+  "bank": {
+    "country": "",
+    "bank_name": "",
+    "branch_name": "",
+    "account_type": "",
+    "account_number": "",
+    "routing_number": "",
+    "iban": "",
+    "swift": "",
+    "holder_name": ""
+  },
+  "government_id": {
+    "country": "",
+    "type": "",
+    "number": "",
+    "expiry": ""
+  },
+  "tax": {
+    "country": "",
+    "tax_id": ""
+  },
+  "preferences": {
+    "locale": "",
+    "currency": "",
+    "marketing_opt_in": false
+  },
+  "notes": ""
+}

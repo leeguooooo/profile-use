@@ -1,0 +1,7 @@
+interface:
+  display_name: "Personal Autofill"
+  short_description: "Fill forms from a private local profile."
+  default_prompt: "Use $personal-autofill to help me fill this registration form from my private profile, confirming sensitive fields before submit."
+
+policy:
+  allow_implicit_invocation: true

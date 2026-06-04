@@ -1,0 +1,6 @@
+.DS_Store
+*.profile.json
+profiles/
+.env
+*.log
+__pycache__/

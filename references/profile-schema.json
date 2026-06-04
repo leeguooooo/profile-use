@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Personal Autofill Profile",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "profile_name": { "type": "string" },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "full_name": { "type": "string", "sensitivity": "medium" },
+        "family_name": { "type": "string", "sensitivity": "medium" },
+        "given_name": { "type": "string", "sensitivity": "medium" },
+        "middle_name": { "type": "string", "sensitivity": "medium" },
+        "preferred_name": { "type": "string", "sensitivity": "low" },
+        "birthdate": { "type": "string", "sensitivity": "high", "format": "date" },
+        "gender": { "type": "string", "sensitivity": "high" }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "sensitivity": "medium" },
+        "phone_country_code": { "type": "string", "sensitivity": "medium" },
+        "phone": { "type": "string", "sensitivity": "medium" },
+        "alternate_email": { "type": "string", "sensitivity": "medium" }
+      }
+    },
+    "address": {
+      "type": "object",
+      "properties": {
+        "country": { "type": "string", "sensitivity": "medium" },
+        "region": { "type": "string", "sensitivity": "medium" },
+        "city": { "type": "string", "sensitivity": "medium" },
+        "ward_or_district": { "type": "string", "sensitivity": "medium" },
+        "line1": { "type": "string", "sensitivity": "high" },
+        "line2": { "type": "string", "sensitivity": "high" },
+        "postal_code": { "type": "string", "sensitivity": "medium" }
+      }
+    },
+    "payment": { "type": "object", "sensitivity": "high" },
+    "bank": { "type": "object", "sensitivity": "high" },
+    "government_id": { "type": "object", "sensitivity": "high" },
+    "tax": { "type": "object", "sensitivity": "high" },
+    "preferences": { "type": "object", "sensitivity": "low" },
+    "notes": { "type": "string", "sensitivity": "medium" }
+  }
+}
