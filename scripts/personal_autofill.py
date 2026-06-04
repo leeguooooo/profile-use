@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,25 @@ HIGH_SENSITIVITY_PREFIXES = (
     "identity.birthdate",
     "identity.gender",
 )
+
+# Legal-name fields. Medium sensitivity: usable for filling, but masked in
+# redacted summaries so they do not leak when the agent reports back.
+NAME_FIELDS = (
+    "identity.full_name",
+    "identity.family_name",
+    "identity.given_name",
+    "identity.middle_name",
+    "identity.name_kana",
+)
+
+
+def matches_prefix(path: str, prefixes: tuple[str, ...]) -> bool:
+    """Segment-aware prefix match, so ``tax`` does not match ``taxonomy``."""
+    return any(path == prefix or path.startswith(prefix + ".") for prefix in prefixes)
+
+
+def is_high_sensitivity(path: str) -> bool:
+    return matches_prefix(path, HIGH_SENSITIVITY_PREFIXES)
 
 
 def default_dir() -> Path:
@@ -139,15 +157,26 @@ def redact_value(path: str, value: Any) -> Any:
     if isinstance(value, (bool, int, float)):
         return value
     text = str(value)
-    if path.startswith(HIGH_SENSITIVITY_PREFIXES):
+    if is_high_sensitivity(path):
         return mask_tail(text, 4)
+    if path in NAME_FIELDS:
+        return redact_name(text)
     if "email" in path:
         return redact_email(text)
+    if path.endswith("phone_country_code"):
+        return text  # a dialing code such as +81 is not sensitive
     if "phone" in path or "postal_code" in path:
         return mask_tail(text, 2)
-    if path.startswith("address.line"):
+    if matches_prefix(path, ("address.line1", "address.line2")) or path == "notes":
         return mask_tail(text, 4)
     return text
+
+
+def redact_name(value: str) -> str:
+    tokens = value.split()
+    if not tokens:
+        return value
+    return " ".join(token[:1] + "*" * (len(token) - 1) if len(token) > 1 else token for token in tokens)
 
 
 def redact_email(value: str) -> str:
@@ -196,6 +225,33 @@ def command_get(args: argparse.Namespace) -> None:
             result[field] = None
             continue
         result[field] = value if args.reveal else redact_value(field, value)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def command_values(args: argparse.Namespace) -> None:
+    """Return raw (unredacted) values for the agent to type into a form.
+
+    With explicit fields, returns exactly those. With no fields, returns a flat
+    {dotpath: value} map of every filled field, excluding high-sensitivity
+    prefixes unless --include-sensitive is passed. High-sensitivity values are
+    only ever returned when named explicitly or opted into.
+    """
+    data = load_profile(args.profile, args.directory)
+    result: dict[str, Any] = {}
+    if args.fields:
+        for field in args.fields:
+            try:
+                result[field] = get_path(data, field)
+            except KeyError:
+                result[field] = None
+    else:
+        for field in iter_fields(data):
+            if not args.include_sensitive and is_high_sensitivity(field):
+                continue
+            value = get_path(data, field)
+            if value in ("", None, [], {}):
+                continue
+            result[field] = value
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -273,6 +329,19 @@ def build_parser() -> argparse.ArgumentParser:
     get.add_argument("--reveal", action="store_true", help="Show full values instead of redacted values.")
     get.set_defaults(func=command_get)
 
+    values = subparsers.add_parser(
+        "values",
+        help="Print raw (unredacted) values for filling a form. Excludes high-sensitivity fields unless named or --include-sensitive.",
+    )
+    values.add_argument("fields", nargs="*", help="Specific dot-paths; omit to dump all filled low/medium fields.")
+    values.add_argument("--profile", default="personal")
+    values.add_argument(
+        "--include-sensitive",
+        action="store_true",
+        help="Include high-sensitivity fields (payment, bank, government_id, tax, birthdate, gender) in a no-field dump.",
+    )
+    values.set_defaults(func=command_values)
+
     set_cmd = subparsers.add_parser("set", help="Set a dot-path field, creating nested objects as needed.")
     set_cmd.add_argument("field")
     set_cmd.add_argument("value")
@@ -298,8 +367,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    if not shutil.which("python3") and sys.version_info.major < 3:
-        raise SystemExit("python3 is required")
     parser = build_parser()
     args = parser.parse_args()
     args.func(args)
