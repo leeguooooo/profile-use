@@ -43,21 +43,25 @@ def is_high_sensitivity(path: str) -> bool:
     return matches_prefix(path, HIGH_SENSITIVITY_PREFIXES)
 
 
+def icloud_root() -> Path:
+    return Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+
+
+def icloud_dir() -> Path:
+    return icloud_root() / "Agent Profiles" / "personal-autofill"
+
+
+def local_fallback_dir() -> Path:
+    return Path.home() / ".config" / "personal-autofill"
+
+
 def default_dir() -> Path:
     override = os.environ.get("PERSONAL_AUTOFILL_DIR")
     if override:
         return Path(override).expanduser()
-    icloud = (
-        Path.home()
-        / "Library"
-        / "Mobile Documents"
-        / "com~apple~CloudDocs"
-        / "Agent Profiles"
-        / "personal-autofill"
-    )
-    if icloud.parent.exists():
-        return icloud
-    return Path.home() / ".config" / "personal-autofill"
+    if icloud_root().exists():
+        return icloud_dir()
+    return local_fallback_dir()
 
 
 def profile_path(profile: str, directory: Path | None = None) -> Path:
@@ -208,6 +212,22 @@ def command_path(args: argparse.Namespace) -> None:
     print(profile_path(args.profile, args.directory))
 
 
+def command_doctor(args: argparse.Namespace) -> None:
+    profile = args.profile
+    data = {
+        "profile": profile,
+        "env_PERSONAL_AUTOFILL_DIR": os.environ.get("PERSONAL_AUTOFILL_DIR"),
+        "icloud_root": str(icloud_root()),
+        "icloud_root_exists": icloud_root().exists(),
+        "icloud_profile_path": str(profile_path(profile, icloud_dir())),
+        "icloud_profile_exists": profile_path(profile, icloud_dir()).exists(),
+        "local_fallback_path": str(profile_path(profile, local_fallback_dir())),
+        "local_fallback_exists": profile_path(profile, local_fallback_dir()).exists(),
+        "resolved_default_path": str(profile_path(profile, args.directory)),
+    }
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
 def command_show(args: argparse.Namespace) -> None:
     data = load_profile(args.profile, args.directory)
     if not args.reveal:
@@ -317,6 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     path = subparsers.add_parser("path", help="Print the profile path.")
     path.add_argument("--profile", default="personal")
     path.set_defaults(func=command_path)
+
+    doctor = subparsers.add_parser("doctor", help="Show profile path resolution and iCloud availability.")
+    doctor.add_argument("--profile", default="personal")
+    doctor.set_defaults(func=command_doctor)
 
     show = subparsers.add_parser("show", help="Print the profile as JSON.")
     show.add_argument("--profile", default="personal")

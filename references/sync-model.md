@@ -12,6 +12,12 @@ Default path:
 ~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill
 ```
 
+The helper script checks whether the iCloud Drive root exists and creates `Agent Profiles/personal-autofill` on first write. It should not require the `Agent Profiles` folder to already exist. If it falls back to `~/.config/personal-autofill`, run:
+
+```bash
+python3 scripts/personal_autofill.py doctor --profile personal
+```
+
 Use plaintext here only if the Mac account and iCloud account are trusted. Keep high-sensitivity values such as card CVV, bank accounts, passwords, recovery codes, and government IDs in a password manager when possible.
 
 ## GitHub

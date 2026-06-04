@@ -22,6 +22,7 @@ Prefer the helper script:
 
 ```bash
 python3 scripts/personal_autofill.py path
+python3 scripts/personal_autofill.py doctor
 python3 scripts/personal_autofill.py init --profile personal
 python3 scripts/personal_autofill.py show --profile personal
 python3 scripts/personal_autofill.py values --profile personal
@@ -45,6 +46,8 @@ Default location order:
 1. `$PERSONAL_AUTOFILL_DIR`
 2. `$HOME/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill`
 3. `$HOME/.config/personal-autofill`
+
+The iCloud rule checks the iCloud Drive root (`com~apple~CloudDocs`) and creates `Agent Profiles/personal-autofill` on first write. Use `doctor` when a profile unexpectedly lands in `.config`.
 
 Use `references/profile-template.json` for the editable shape. Use `references/profile-schema.json` for field names and sensitivity hints.
 
