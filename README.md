@@ -1,4 +1,4 @@
-# personal-autofill
+# profile-use
 
 A skill for safely filling signup, registration, checkout, banking, KYC, and onboarding forms from a private local profile.
 
@@ -10,35 +10,35 @@ It is intentionally split into two parts:
 ## Install
 
 ```bash
-npx skills add leeguooooo/personal-autofill
+npx skills add leeguooooo/profile-use
 ```
 
 Or install from the GitHub URL:
 
 ```bash
-npx skills add https://github.com/leeguooooo/personal-autofill
+npx skills add https://github.com/leeguooooo/profile-use
 ```
 
 ## Create a private profile
 
 ```bash
-python3 scripts/personal_autofill.py init --profile personal
-python3 scripts/personal_autofill.py path --profile personal
-python3 scripts/personal_autofill.py doctor --profile personal
+python3 scripts/profile_use.py init --profile personal
+python3 scripts/profile_use.py path --profile personal
+python3 scripts/profile_use.py doctor --profile personal
 ```
 
 By default, the script uses iCloud Drive when available:
 
 ```text
-~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill
+~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/profile-use
 ```
 
-The script checks the iCloud Drive root and creates `Agent Profiles/personal-autofill` on first write. If iCloud Drive is unavailable, it falls back to `~/.config/personal-autofill`.
+The script checks the iCloud Drive root and creates `Agent Profiles/profile-use` on first write. If iCloud Drive is unavailable, it falls back to `~/.config/profile-use`.
 
 Override the location with:
 
 ```bash
-export PERSONAL_AUTOFILL_DIR="/private/path/to/personal-autofill"
+export PROFILE_USE_DIR="/private/path/to/profile-use"
 ```
 
 ## Sync recommendation
@@ -50,25 +50,25 @@ Never commit plaintext profile data.
 ## Commands
 
 ```bash
-python3 scripts/personal_autofill.py show --profile personal
-python3 scripts/personal_autofill.py values --profile personal
-python3 scripts/personal_autofill.py values --profile personal contact.email address.postal_code
-python3 scripts/personal_autofill.py get --profile personal contact.email address.postal_code
-python3 scripts/personal_autofill.py get --profile personal --reveal contact.email
-python3 scripts/personal_autofill.py set --profile personal contact.email "me@example.com"
-python3 scripts/personal_autofill.py set --profile personal preferences.marketing_opt_in false --json
-python3 scripts/personal_autofill.py unset --profile personal preferences.marketing_opt_in
-python3 scripts/personal_autofill.py list-fields --profile personal --filled
-python3 scripts/personal_autofill.py check --profile personal
+python3 scripts/profile_use.py show --profile personal
+python3 scripts/profile_use.py values --profile personal
+python3 scripts/profile_use.py values --profile personal contact.email address.postal_code
+python3 scripts/profile_use.py get --profile personal contact.email address.postal_code
+python3 scripts/profile_use.py get --profile personal --reveal contact.email
+python3 scripts/profile_use.py set --profile personal contact.email "me@example.com"
+python3 scripts/profile_use.py set --profile personal preferences.marketing_opt_in false --json
+python3 scripts/profile_use.py unset --profile personal preferences.marketing_opt_in
+python3 scripts/profile_use.py list-fields --profile personal --filled
+python3 scripts/profile_use.py check --profile personal
 ```
 
 Original document images (residence card, bank card, My Number card, ...) for forms that need a photo upload:
 
 ```bash
-python3 scripts/personal_autofill.py attach ~/Downloads/card.jpg --doc residence_card_front --label "在留カード 表面" --move
-python3 scripts/personal_autofill.py attachments --profile personal
-python3 scripts/personal_autofill.py attachment-path --doc residence_card_front
-python3 scripts/personal_autofill.py detach --doc residence_card_front
+python3 scripts/profile_use.py attach ~/Downloads/card.jpg --doc residence_card_front --label "在留カード 表面" --move
+python3 scripts/profile_use.py attachments --profile personal
+python3 scripts/profile_use.py attachment-path --doc residence_card_front
+python3 scripts/profile_use.py detach --doc residence_card_front
 ```
 
 Attachments are stored next to the profile (`<profile-dir>/attachments/<profile>/`, mode 600) so they sync with it and never enter Git; metadata lives under `documents.<doc>` in the profile JSON.
@@ -85,9 +85,9 @@ Never type a redacted value (`t***@example.com`) into a form — use `values` fo
 The profile is meant to grow during real registration work. When a site asks for a reusable field that is missing, add it with a dot path:
 
 ```bash
-python3 scripts/personal_autofill.py set --profile personal identity.name_kana "..."
-python3 scripts/personal_autofill.py set --profile personal address.jp.prefecture "..."
-python3 scripts/personal_autofill.py set --profile personal invoice.receipt_name "..."
+python3 scripts/profile_use.py set --profile personal identity.name_kana "..."
+python3 scripts/profile_use.py set --profile personal address.jp.prefecture "..."
+python3 scripts/profile_use.py set --profile personal invoice.receipt_name "..."
 ```
 
 Use flexible nested paths for country-specific or site-specific fields. Do not save one-time codes, CAPTCHA text, temporary links, passwords, or session tokens.

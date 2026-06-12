@@ -1,9 +1,9 @@
 ---
-name: personal-autofill
+name: profile-use
 description: Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git.
 ---
 
-# Personal Autofill
+# Profile Use
 
 Use a private profile as the source of truth for repetitive registration and checkout fields. The skill helps map form labels to profile fields, fill only what is needed, and keep sensitive values out of chat, logs, screenshots, repos, and PRs.
 
@@ -21,15 +21,15 @@ Use a private profile as the source of truth for repetitive registration and che
 Prefer the helper script:
 
 ```bash
-python3 scripts/personal_autofill.py path
-python3 scripts/personal_autofill.py doctor
-python3 scripts/personal_autofill.py init --profile personal
-python3 scripts/personal_autofill.py show --profile personal
-python3 scripts/personal_autofill.py values --profile personal
-python3 scripts/personal_autofill.py values --profile personal contact.email address.postal_code
-python3 scripts/personal_autofill.py get --profile personal contact.email address.postal_code
-python3 scripts/personal_autofill.py set --profile personal address.postal_code "1000001"
-python3 scripts/personal_autofill.py list-fields --profile personal --filled
+python3 scripts/profile_use.py path
+python3 scripts/profile_use.py doctor
+python3 scripts/profile_use.py init --profile personal
+python3 scripts/profile_use.py show --profile personal
+python3 scripts/profile_use.py values --profile personal
+python3 scripts/profile_use.py values --profile personal contact.email address.postal_code
+python3 scripts/profile_use.py get --profile personal contact.email address.postal_code
+python3 scripts/profile_use.py set --profile personal address.postal_code "1000001"
+python3 scripts/profile_use.py list-fields --profile personal --filled
 ```
 
 ### Redacted vs. raw: pick the right command
@@ -43,11 +43,13 @@ NEVER type a redacted/masked value into a form. `get contact.email` returns `t**
 
 Default location order:
 
-1. `$PERSONAL_AUTOFILL_DIR`
-2. `$HOME/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill`
-3. `$HOME/.config/personal-autofill`
+1. `$PROFILE_USE_DIR` (legacy `$PERSONAL_AUTOFILL_DIR` is still honored)
+2. `$HOME/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/profile-use`
+3. `$HOME/.config/profile-use`
 
-The iCloud rule checks the iCloud Drive root (`com~apple~CloudDocs`) and creates `Agent Profiles/personal-autofill` on first write. Use `doctor` when a profile unexpectedly lands in `.config`.
+A pre-rename `personal-autofill` directory that still holds data is used as a fallback when the `profile-use` directory does not exist yet.
+
+The iCloud rule checks the iCloud Drive root (`com~apple~CloudDocs`) and creates `Agent Profiles/profile-use` on first write. Use `doctor` when a profile unexpectedly lands in `.config`.
 
 Use `references/profile-template.json` for the editable shape. Use `references/profile-schema.json` for field names and sensitivity hints.
 
@@ -61,15 +63,15 @@ Expect the profile to grow over time as real registrations reveal new fields. Wh
 4. Add the field with `set`:
 
 ```bash
-python3 scripts/personal_autofill.py set --profile personal identity.name_kana "..."
-python3 scripts/personal_autofill.py set --profile personal address.jp.prefecture "..."
-python3 scripts/personal_autofill.py set --profile personal preferences.newsletter_opt_in false --json
+python3 scripts/profile_use.py set --profile personal identity.name_kana "..."
+python3 scripts/profile_use.py set --profile personal address.jp.prefecture "..."
+python3 scripts/profile_use.py set --profile personal preferences.newsletter_opt_in false --json
 ```
 
 5. Confirm with redacted reads:
 
 ```bash
-python3 scripts/personal_autofill.py get --profile personal identity.name_kana address.jp.prefecture
+python3 scripts/profile_use.py get --profile personal identity.name_kana address.jp.prefecture
 ```
 
 Use flexible nested paths when a country, site, or tenant needs a special variant. Examples: `address.jp.*`, `address.us.*`, `contact.work_email`, `invoice.jp.qualified_invoice_name`.
@@ -103,10 +105,10 @@ If a site has country-specific formatting rules, preserve the profile value unle
 Some forms need the original image, not extracted text: residence card photos for KYC, bank card photos for payroll, My Number card scans. Keep these originals next to the profile so they sync with it and survive temp-file cleanup:
 
 ```bash
-python3 scripts/personal_autofill.py attach /tmp/dl/img1.jpg --doc residence_card_front --label "在留カード 表面" --source "lark chat 2026-06-12" --move
-python3 scripts/personal_autofill.py attachments --profile personal
-python3 scripts/personal_autofill.py attachment-path --doc residence_card_front
-python3 scripts/personal_autofill.py detach --doc residence_card_front
+python3 scripts/profile_use.py attach /tmp/dl/img1.jpg --doc residence_card_front --label "在留カード 表面" --source "lark chat 2026-06-12" --move
+python3 scripts/profile_use.py attachments --profile personal
+python3 scripts/profile_use.py attachment-path --doc residence_card_front
+python3 scripts/profile_use.py detach --doc residence_card_front
 ```
 
 Files land in `<profile-dir>/attachments/<profile>/<doc>.<ext>` with mode 600; metadata (file, label, source, added date, sha256) is recorded under `documents.<doc>` in the profile JSON.

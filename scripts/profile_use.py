@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage local personal-autofill JSON profiles."""
+"""Manage local profile-use JSON profiles."""
 
 from __future__ import annotations
 
@@ -51,16 +51,26 @@ def icloud_root() -> Path:
     return Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 
 
+def _prefer_new_name(new: Path, legacy: Path) -> Path:
+    """Use the profile-use directory, falling back to a pre-rename
+    personal-autofill directory that still holds data."""
+    if not new.exists() and legacy.exists():
+        return legacy
+    return new
+
+
 def icloud_dir() -> Path:
-    return icloud_root() / "Agent Profiles" / "personal-autofill"
+    base = icloud_root() / "Agent Profiles"
+    return _prefer_new_name(base / "profile-use", base / "personal-autofill")
 
 
 def local_fallback_dir() -> Path:
-    return Path.home() / ".config" / "personal-autofill"
+    config = Path.home() / ".config"
+    return _prefer_new_name(config / "profile-use", config / "personal-autofill")
 
 
 def default_dir() -> Path:
-    override = os.environ.get("PERSONAL_AUTOFILL_DIR")
+    override = os.environ.get("PROFILE_USE_DIR") or os.environ.get("PERSONAL_AUTOFILL_DIR")
     if override:
         return Path(override).expanduser()
     if icloud_root().exists():
@@ -246,7 +256,8 @@ def command_doctor(args: argparse.Namespace) -> None:
     profile = args.profile
     data = {
         "profile": profile,
-        "env_PERSONAL_AUTOFILL_DIR": os.environ.get("PERSONAL_AUTOFILL_DIR"),
+        "env_PROFILE_USE_DIR": os.environ.get("PROFILE_USE_DIR"),
+        "env_PERSONAL_AUTOFILL_DIR_legacy": os.environ.get("PERSONAL_AUTOFILL_DIR"),
         "icloud_root": str(icloud_root()),
         "icloud_root_exists": icloud_root().exists(),
         "icloud_profile_path": str(profile_path(profile, icloud_dir())),

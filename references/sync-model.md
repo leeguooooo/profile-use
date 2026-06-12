@@ -9,13 +9,13 @@ iCloud Drive is the best default for a single Apple user because it syncs across
 Default path:
 
 ```text
-~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-autofill
+~/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/profile-use
 ```
 
-The helper script checks whether the iCloud Drive root exists and creates `Agent Profiles/personal-autofill` on first write. It should not require the `Agent Profiles` folder to already exist. If it falls back to `~/.config/personal-autofill`, run:
+The helper script checks whether the iCloud Drive root exists and creates `Agent Profiles/profile-use` on first write. It should not require the `Agent Profiles` folder to already exist. If it falls back to `~/.config/profile-use`, run:
 
 ```bash
-python3 scripts/personal_autofill.py doctor --profile personal
+python3 scripts/profile_use.py doctor --profile personal
 ```
 
 Use plaintext here only if the Mac account and iCloud account are trusted. Keep high-sensitivity values such as card CVV, bank accounts, passwords, recovery codes, and government IDs in a password manager when possible.
@@ -59,7 +59,7 @@ Use environment variables only for temporary automation sessions. They are conve
 Supported variable:
 
 ```bash
-export PERSONAL_AUTOFILL_DIR="/private/path/to/profiles"
+export PROFILE_USE_DIR="/private/path/to/profiles"
 ```
 
 ## Decision Table

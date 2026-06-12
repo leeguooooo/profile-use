@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke + redaction tests. Run: python3 tests/test_personal_autofill.py"""
+"""Smoke + redaction tests. Run: python3 tests/test_profile_use.py"""
 
 import importlib.util
 import os
@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 _SPEC = importlib.util.spec_from_file_location(
-    "pa", Path(__file__).resolve().parents[1] / "scripts" / "personal_autofill.py"
+    "pa", Path(__file__).resolve().parents[1] / "scripts" / "profile_use.py"
 )
 pa = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(pa)
@@ -69,7 +69,7 @@ class PathTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(pa.Path, "home", return_value=home):
                 self.assertEqual(
                     pa.default_dir(),
-                    icloud_root / "Agent Profiles" / "personal-autofill",
+                    icloud_root / "Agent Profiles" / "profile-use",
                 )
 
 
