@@ -45,6 +45,20 @@ class SensitivityMatchTests(unittest.TestCase):
         self.assertFalse(pa.is_high_sensitivity("taxonomy"))  # must not over-match
         self.assertFalse(pa.is_high_sensitivity("address.city"))
 
+    def test_street_address_is_high_sensitivity(self):
+        # Regression: values no-field dump used to leak the full street address
+        # because address.line1/line2 were absent from HIGH_SENSITIVITY_PREFIXES.
+        self.assertTrue(pa.is_high_sensitivity("address.line1"))
+        self.assertTrue(pa.is_high_sensitivity("address.line2"))
+
+    def test_document_metadata_is_high_sensitivity(self):
+        # Regression: documents.<doc>.label/source carried PII through redacted show.
+        self.assertTrue(pa.is_high_sensitivity("documents.residence_card_front.label"))
+        self.assertEqual(
+            pa.redact_value("documents.x.source", "lark chat with ning 2026-06-12"),
+            pa.mask_tail("lark chat with ning 2026-06-12", 4),
+        )
+
 
 class PathTests(unittest.TestCase):
     def test_set_get_roundtrip(self):
@@ -138,6 +152,60 @@ class AttachmentTests(unittest.TestCase):
             source.write_bytes(b"x")
             with self.assertRaises(SystemExit):
                 self.run_cli(tmp, "attach", str(source), "--doc", "../escape")
+
+
+class SecurityTests(unittest.TestCase):
+    def run_cli(self, tmp, *argv):
+        import contextlib
+        import io
+
+        parser = pa.build_parser()
+        args = parser.parse_args(["--dir", str(tmp), *argv])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            args.func(args)
+        return out.getvalue()
+
+    def test_profile_name_traversal_rejected(self):
+        # Regression: --profile was interpolated into a path with no validation,
+        # so ../.. escaped the protected profile directory.
+        with self.assertRaises(SystemExit):
+            pa.profile_path("../../etc/passwd")
+        with self.assertRaises(SystemExit):
+            pa.attachments_dir("../../tmp/x")
+        with self.assertRaises(SystemExit):
+            pa.profile_path("a/b")
+        # ordinary names still work
+        self.assertTrue(str(pa.profile_path("personal", Path("/x"))).endswith("personal.profile.json"))
+
+    def test_init_with_traversal_name_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            with self.assertRaises(SystemExit):
+                self.run_cli(tmp, "init", "--profile", "../escape")
+
+    def test_poisoned_document_file_cannot_delete_outside_dir(self):
+        # Regression: detach trusted documents.<doc>.file verbatim, giving an
+        # arbitrary-file-delete primitive when the value was poisoned via set.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            victim = tmp / "victim.txt"
+            victim.write_text("do not delete")
+            self.run_cli(tmp, "set", "documents.evil.file", "../../victim.txt")
+            with self.assertRaises(SystemExit):
+                self.run_cli(tmp, "detach", "--doc", "evil")
+            self.assertTrue(victim.exists())  # untouched
+
+    def test_profile_written_0600_and_dir_0700(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            prof = tmp / "personal.profile.json"
+            self.assertEqual(prof.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(tmp.stat().st_mode & 0o777, 0o700)
+            # no leftover temp file
+            self.assertEqual(list(tmp.glob(".*.tmp")), [])
 
 
 if __name__ == "__main__":
