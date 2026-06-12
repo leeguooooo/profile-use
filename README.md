@@ -4,6 +4,8 @@
 
 # profile-use
 
+[中文](README.zh-CN.md) | **English**
+
 One private profile. Every signup form. An agent skill that fills registration, signup, checkout, banking, KYC, and onboarding forms from a single local profile — without your personal data ever touching a Git repo, a chat log, or anyone else's server.
 
 Part of the `*-use` family (`iphone-use`, browser automation, computer use): those skills drive the device, **profile-use is what they fill the forms with**.
