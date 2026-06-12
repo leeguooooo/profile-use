@@ -25,6 +25,11 @@ HIGH_SENSITIVITY_PREFIXES = (
     "tax",
     "identity.birthdate",
     "identity.gender",
+    "address.line1",
+    "address.line2",
+    # Attachment metadata can carry PII in free-form label/source text, and the
+    # schema treats every original document as high sensitivity.
+    "documents",
 )
 
 # Legal-name fields. Medium sensitivity: usable for filling, but masked in
@@ -78,7 +83,23 @@ def default_dir() -> Path:
     return local_fallback_dir()
 
 
+# A profile name becomes a filename and an attachments subdirectory, so it must
+# not contain path separators or traversal — otherwise it escapes the protected
+# (gitignored, mode-600) profile directory.
+PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def validate_profile_name(profile: str) -> str:
+    if not PROFILE_NAME_RE.match(profile):
+        raise SystemExit(
+            f"Invalid profile name: {profile!r}. Use letters, digits, '_' or '-' "
+            "(e.g. personal, work, family, jp)."
+        )
+    return profile
+
+
 def profile_path(profile: str, directory: Path | None = None) -> Path:
+    validate_profile_name(profile)
     return (directory or default_dir()) / f"{profile}.profile.json"
 
 
@@ -88,6 +109,7 @@ DOC_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 
 
 def attachments_dir(profile: str, directory: Path | None = None) -> Path:
+    validate_profile_name(profile)
     return (directory or default_dir()) / "attachments" / profile
 
 
@@ -98,6 +120,18 @@ def validate_doc_key(doc: str) -> str:
             "(e.g. residence_card_front, my_number_card_back, bank_card)."
         )
     return doc
+
+
+def safe_attachment_path(dest_dir: Path, filename: str) -> Path:
+    """Resolve a stored attachment filename, rejecting anything that is not a
+    bare name inside ``dest_dir`` (defends against a poisoned ``documents.*.file``
+    value being used as an unlink/copy target)."""
+    if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise SystemExit(f"Refusing unsafe attachment filename: {filename!r}")
+    candidate = dest_dir / filename
+    if candidate.parent != dest_dir:
+        raise SystemExit(f"Refusing unsafe attachment filename: {filename!r}")
+    return candidate
 
 
 def sha256_file(path: Path) -> str:
@@ -122,12 +156,24 @@ def load_profile(profile: str, directory: Path | None = None) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Any) -> None:
+    # The profile holds bank/government-ID data, so never expose it world-readable:
+    # create the directory 0700 and write the file 0600 from the start (no
+    # create-then-chmod window), via a temp file + atomic rename.
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     try:
-        path.chmod(0o600)
+        path.parent.chmod(0o700)
     except OSError:
         pass
+    payload = (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    tmp = path.parent / f".{path.name}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def get_path(data: dict[str, Any], dotted: str) -> Any:
@@ -383,7 +429,7 @@ def command_attach(args: argparse.Namespace) -> None:
     dest = dest_dir / f"{doc}{source.suffix.lower()}"
     previous = documents.get(doc, {}).get("file")
     if previous and previous != dest.name:
-        (dest_dir / previous).unlink(missing_ok=True)
+        safe_attachment_path(dest_dir, previous).unlink(missing_ok=True)
     shutil.copy2(source, dest)
     try:
         dest.chmod(0o600)
@@ -409,7 +455,15 @@ def command_attachments(args: argparse.Namespace) -> None:
     result: dict[str, Any] = {}
     for doc in sorted(documents):
         meta = dict(documents[doc])
-        path = dest_dir / meta.get("file", "")
+        try:
+            path = safe_attachment_path(dest_dir, meta.get("file", ""))
+        except SystemExit:
+            meta["path"] = None
+            meta["exists"] = False
+            meta["size_bytes"] = None
+            meta["unsafe_filename"] = True
+            result[doc] = meta
+            continue
         meta["path"] = str(path)
         meta["exists"] = path.is_file()
         meta["size_bytes"] = path.stat().st_size if path.is_file() else None
@@ -429,7 +483,7 @@ def command_attachment_path(args: argparse.Namespace) -> None:
     meta = data.get("documents", {}).get(doc)
     if not meta or not meta.get("file"):
         raise SystemExit(f"No attached document: {doc}")
-    path = attachments_dir(args.profile, args.directory) / meta["file"]
+    path = safe_attachment_path(attachments_dir(args.profile, args.directory), meta["file"])
     if not path.is_file():
         raise SystemExit(f"Attachment metadata exists but file is missing: {path}")
     print(path)
@@ -442,7 +496,7 @@ def command_detach(args: argparse.Namespace) -> None:
     meta = documents.pop(doc, None)
     removed_file = False
     if meta and meta.get("file"):
-        path = attachments_dir(args.profile, args.directory) / meta["file"]
+        path = safe_attachment_path(attachments_dir(args.profile, args.directory), meta["file"])
         if path.is_file():
             path.unlink()
             removed_file = True
