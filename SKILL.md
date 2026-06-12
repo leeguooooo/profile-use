@@ -81,8 +81,8 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 1. Identify the form's site, purpose, and profile to use. Default to `personal` unless the user names another profile such as `work`, `family`, or `jp`.
 2. Inspect the form labels and required fields. Build a mapping from labels to profile paths; do not rely only on placeholder text.
 3. Orient with redacted `show` to see the shape, then read the exact values you will type with `values` (raw). Use `values` with no fields to get a flat map of all filled low/medium fields at once.
-4. Fill low-sensitivity fields directly when the user asked for autofill, using the raw `values` output. Examples: name, email, phone, address, postal code.
-5. For high-sensitivity fields (`payment`, `bank`, `government_id`, `tax`, birthdate, gender), show a redacted summary and ask for confirmation before filling; fetch the raw value with an explicit `values payment.card.number` only at the moment of filling.
+4. Fill low-sensitivity fields directly when the user asked for autofill, using the raw `values` output. Examples: name, email, phone, postal code, `address.country` / `address.region` / `address.city`.
+5. For high-sensitivity fields (`payment`, `bank`, `government_id`, `tax`, birthdate, gender, and the street-address lines `address.line1` / `address.line2`), show a redacted summary and ask for confirmation before filling; fetch the raw value with an explicit `values address.line1` (or `values payment.card.number`) only at the moment of filling. These are excluded from the no-field `values` dump, so you must name them.
 6. Before submission, summarize the fields that were filled using redacted `show`/`get` values and wait for an explicit submit approval.
 
 ## Field Mapping Hints
@@ -90,7 +90,7 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 - `identity.full_name`: full legal name or display name, depending on the form.
 - `identity.family_name`, `identity.given_name`: split-name fields.
 - `contact.email`, `contact.phone`, `contact.phone_country_code`: email and telephone fields.
-- `address.country`, `address.region`, `address.city`, `address.line1`, `address.line2`, `address.postal_code`: address fields.
+- `address.country`, `address.region`, `address.city`, `address.postal_code`: address fields (low sensitivity). `address.line1`, `address.line2`: the precise street address — high sensitivity, masked in `show` and excluded from the no-field `values` dump.
 - `payment.card.*`: card fields; always high sensitivity.
 - `bank.*`: bank transfer or withdrawal fields; always high sensitivity.
 - `government_id.*`, `tax.*`: identity verification fields; always high sensitivity.
@@ -111,7 +111,7 @@ python3 scripts/profile_use.py attachment-path --doc residence_card_front
 python3 scripts/profile_use.py detach --doc residence_card_front
 ```
 
-Files land in `<profile-dir>/attachments/<profile>/<doc>.<ext>` with mode 600; metadata (file, label, source, added date, sha256) is recorded under `documents.<doc>` in the profile JSON.
+Files land in `<profile-dir>/attachments/<profile>/<doc>.<ext>` with mode 600; metadata (file, label, source, added date, sha256) is recorded under `documents.<doc>` in the profile JSON. This metadata is treated as high sensitivity — masked in `show`/`get` and excluded from the no-field `values` dump — because `label`/`source` often carry context (counterparty names, dates) you don't want in a redacted summary.
 
 Conventional doc keys: `residence_card_front`, `residence_card_back`, `my_number_card_front`, `my_number_card_back`, `bank_card`, `passport_photo_page`, `health_insurance_card`, `drivers_license_front`. Free-form keys are fine (lowercase letters, digits, `_`, `-`, `.`).
 
