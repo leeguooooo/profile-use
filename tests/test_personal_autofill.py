@@ -73,5 +73,72 @@ class PathTests(unittest.TestCase):
                 )
 
 
+class AttachmentTests(unittest.TestCase):
+    def run_cli(self, tmp, *argv):
+        import contextlib
+        import io
+
+        parser = pa.build_parser()
+        args = parser.parse_args(["--dir", str(tmp), *argv])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            args.func(args)
+        return out.getvalue()
+
+    def test_attach_list_path_detach_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            source = tmp / "card.JPG"
+            source.write_bytes(b"fake image bytes")
+
+            self.run_cli(tmp, "attach", str(source), "--doc", "residence_card_front", "--label", "front")
+            dest = tmp / "attachments" / "personal" / "residence_card_front.jpg"
+            self.assertTrue(dest.is_file())
+            self.assertEqual(dest.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(source.exists())  # copy by default, not move
+
+            import json as _json
+
+            listing = _json.loads(self.run_cli(tmp, "attachments"))
+            self.assertIn("residence_card_front", listing["documents"])
+            self.assertTrue(listing["documents"]["residence_card_front"]["exists"])
+
+            path_out = self.run_cli(tmp, "attachment-path", "--doc", "residence_card_front").strip()
+            self.assertEqual(path_out, str(dest))
+
+            self.run_cli(tmp, "detach", "--doc", "residence_card_front")
+            self.assertFalse(dest.exists())
+            listing = _json.loads(self.run_cli(tmp, "attachments"))
+            self.assertEqual(listing["documents"], {})
+
+    def test_attach_move_deletes_source_and_force_replaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            source = tmp / "a.png"
+            source.write_bytes(b"v1")
+            self.run_cli(tmp, "attach", str(source), "--doc", "bank_card", "--move")
+            self.assertFalse(source.exists())
+
+            other = tmp / "b.jpg"
+            other.write_bytes(b"v2")
+            with self.assertRaises(SystemExit):
+                self.run_cli(tmp, "attach", str(other), "--doc", "bank_card")
+            self.run_cli(tmp, "attach", str(other), "--doc", "bank_card", "--force")
+            # extension changed: old .png file is cleaned up, new .jpg tracked
+            self.assertFalse((tmp / "attachments" / "personal" / "bank_card.png").exists())
+            self.assertTrue((tmp / "attachments" / "personal" / "bank_card.jpg").is_file())
+
+    def test_invalid_doc_key_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            source = tmp / "a.png"
+            source.write_bytes(b"x")
+            with self.assertRaises(SystemExit):
+                self.run_cli(tmp, "attach", str(source), "--doc", "../escape")
+
+
 if __name__ == "__main__":
     unittest.main()

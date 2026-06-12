@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import os
+import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -66,6 +70,32 @@ def default_dir() -> Path:
 
 def profile_path(profile: str, directory: Path | None = None) -> Path:
     return (directory or default_dir()) / f"{profile}.profile.json"
+
+
+# Original document images (residence card, My Number card, bank card, ...)
+# live next to the profile so they sync the same way and never enter Git.
+DOC_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+
+
+def attachments_dir(profile: str, directory: Path | None = None) -> Path:
+    return (directory or default_dir()) / "attachments" / profile
+
+
+def validate_doc_key(doc: str) -> str:
+    if not DOC_KEY_RE.match(doc):
+        raise SystemExit(
+            f"Invalid doc key: {doc!r}. Use lowercase letters, digits, '_', '-', '.' "
+            "(e.g. residence_card_front, my_number_card_back, bank_card)."
+        )
+    return doc
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_profile(profile: str, directory: Path | None = None) -> dict[str, Any]:
@@ -324,6 +354,97 @@ def command_check(args: argparse.Namespace) -> None:
     print(json.dumps({"ok": True, "path": str(profile_path(args.profile, args.directory))}, indent=2))
 
 
+def command_attach(args: argparse.Namespace) -> None:
+    doc = validate_doc_key(args.doc)
+    source = Path(args.file).expanduser()
+    if not source.is_file():
+        raise SystemExit(f"Source file not found: {source}")
+    data = load_profile(args.profile, args.directory)
+    documents = data.setdefault("documents", {})
+    if doc in documents and not args.force:
+        raise SystemExit(f"Document already attached: {doc}\nUse --force to replace it.")
+    dest_dir = attachments_dir(args.profile, args.directory)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        dest_dir.chmod(0o700)
+    except OSError:
+        pass
+    dest = dest_dir / f"{doc}{source.suffix.lower()}"
+    previous = documents.get(doc, {}).get("file")
+    if previous and previous != dest.name:
+        (dest_dir / previous).unlink(missing_ok=True)
+    shutil.copy2(source, dest)
+    try:
+        dest.chmod(0o600)
+    except OSError:
+        pass
+    documents[doc] = {
+        "file": dest.name,
+        "label": args.label or "",
+        "source": args.source or "",
+        "added": datetime.date.today().isoformat(),
+        "sha256": sha256_file(dest),
+    }
+    write_json(profile_path(args.profile, args.directory), data)
+    if args.move:
+        source.unlink()
+    print(json.dumps({"ok": True, "profile": args.profile, "doc": doc, "path": str(dest)}, indent=2))
+
+
+def command_attachments(args: argparse.Namespace) -> None:
+    data = load_profile(args.profile, args.directory)
+    documents = data.get("documents", {})
+    dest_dir = attachments_dir(args.profile, args.directory)
+    result: dict[str, Any] = {}
+    for doc in sorted(documents):
+        meta = dict(documents[doc])
+        path = dest_dir / meta.get("file", "")
+        meta["path"] = str(path)
+        meta["exists"] = path.is_file()
+        meta["size_bytes"] = path.stat().st_size if path.is_file() else None
+        result[doc] = meta
+    tracked = {meta.get("file") for meta in documents.values()}
+    orphans = (
+        sorted(str(p) for p in dest_dir.iterdir() if p.is_file() and p.name not in tracked)
+        if dest_dir.is_dir()
+        else []
+    )
+    print(json.dumps({"documents": result, "orphan_files": orphans}, indent=2, ensure_ascii=False))
+
+
+def command_attachment_path(args: argparse.Namespace) -> None:
+    doc = validate_doc_key(args.doc)
+    data = load_profile(args.profile, args.directory)
+    meta = data.get("documents", {}).get(doc)
+    if not meta or not meta.get("file"):
+        raise SystemExit(f"No attached document: {doc}")
+    path = attachments_dir(args.profile, args.directory) / meta["file"]
+    if not path.is_file():
+        raise SystemExit(f"Attachment metadata exists but file is missing: {path}")
+    print(path)
+
+
+def command_detach(args: argparse.Namespace) -> None:
+    doc = validate_doc_key(args.doc)
+    data = load_profile(args.profile, args.directory)
+    documents = data.get("documents", {})
+    meta = documents.pop(doc, None)
+    removed_file = False
+    if meta and meta.get("file"):
+        path = attachments_dir(args.profile, args.directory) / meta["file"]
+        if path.is_file():
+            path.unlink()
+            removed_file = True
+    if meta is not None:
+        write_json(profile_path(args.profile, args.directory), data)
+    print(
+        json.dumps(
+            {"ok": meta is not None, "profile": args.profile, "doc": doc, "removed_file": removed_file},
+            indent=2,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", dest="directory", type=Path, help="Profile directory override.")
@@ -386,6 +507,35 @@ def build_parser() -> argparse.ArgumentParser:
     check = subparsers.add_parser("check", help="Validate the profile shape lightly.")
     check.add_argument("--profile", default="personal")
     check.set_defaults(func=command_check)
+
+    attach = subparsers.add_parser(
+        "attach",
+        help="Store an original document image/file next to the profile and record it under documents.<doc>.",
+    )
+    attach.add_argument("file", help="Source file to copy into the attachments directory.")
+    attach.add_argument("--doc", required=True, help="Document key, e.g. residence_card_front.")
+    attach.add_argument("--profile", default="personal")
+    attach.add_argument("--label", help="Human-readable label, e.g. '在留カード 表面'.")
+    attach.add_argument("--source", help="Where the file came from, e.g. 'lark chat with ning 2026-06-12'.")
+    attach.add_argument("--move", action="store_true", help="Delete the source file after copying.")
+    attach.add_argument("--force", action="store_true", help="Replace an existing attachment with the same key.")
+    attach.set_defaults(func=command_attach)
+
+    attachments = subparsers.add_parser("attachments", help="List attached original documents.")
+    attachments.add_argument("--profile", default="personal")
+    attachments.set_defaults(func=command_attachments)
+
+    attachment_path = subparsers.add_parser(
+        "attachment-path", help="Print the absolute path of one attached document (for uploads)."
+    )
+    attachment_path.add_argument("--doc", required=True)
+    attachment_path.add_argument("--profile", default="personal")
+    attachment_path.set_defaults(func=command_attachment_path)
+
+    detach = subparsers.add_parser("detach", help="Remove an attached document and its metadata.")
+    detach.add_argument("--doc", required=True)
+    detach.add_argument("--profile", default="personal")
+    detach.set_defaults(func=command_detach)
 
     return parser
 

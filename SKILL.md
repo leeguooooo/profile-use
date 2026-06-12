@@ -98,6 +98,29 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 
 If a site has country-specific formatting rules, preserve the profile value unless the form rejects it. Normalize only after checking the visible validation message.
 
+## Original Document Images (Attachments)
+
+Some forms need the original image, not extracted text: residence card photos for KYC, bank card photos for payroll, My Number card scans. Keep these originals next to the profile so they sync with it and survive temp-file cleanup:
+
+```bash
+python3 scripts/personal_autofill.py attach /tmp/dl/img1.jpg --doc residence_card_front --label "在留カード 表面" --source "lark chat 2026-06-12" --move
+python3 scripts/personal_autofill.py attachments --profile personal
+python3 scripts/personal_autofill.py attachment-path --doc residence_card_front
+python3 scripts/personal_autofill.py detach --doc residence_card_front
+```
+
+Files land in `<profile-dir>/attachments/<profile>/<doc>.<ext>` with mode 600; metadata (file, label, source, added date, sha256) is recorded under `documents.<doc>` in the profile JSON.
+
+Conventional doc keys: `residence_card_front`, `residence_card_back`, `my_number_card_front`, `my_number_card_back`, `bank_card`, `passport_photo_page`, `health_insurance_card`, `drivers_license_front`. Free-form keys are fine (lowercase letters, digits, `_`, `-`, `.`).
+
+Rules for originals:
+
+1. When a document image appears in a chat download or temp directory and is worth keeping, `attach --move` it immediately, then delete any remaining temp copies. Do not leave ID images in `/tmp`, downloads, or the repo.
+2. Treat every attachment as high sensitivity. Uploading an attachment to a website requires the user's explicit confirmation for that specific upload, even if autofill of text fields was already approved.
+3. Use `attachment-path` to get the file path for an upload widget; never re-screenshot or copy the image elsewhere.
+4. Do not attach one-time documents (CAPTCHAs, QR codes, temporary passes). Attach stable identity/payment documents only.
+5. Expired or surrendered documents: `detach` them, or replace with `attach --force` when a renewed card arrives.
+
 ## Sync Guidance
 
 Read `references/sync-model.md` when choosing or explaining where profile data should live.
