@@ -62,6 +62,17 @@ python3 scripts/personal_autofill.py list-fields --profile personal --filled
 python3 scripts/personal_autofill.py check --profile personal
 ```
 
+Original document images (residence card, bank card, My Number card, ...) for forms that need a photo upload:
+
+```bash
+python3 scripts/personal_autofill.py attach ~/Downloads/card.jpg --doc residence_card_front --label "在留カード 表面" --move
+python3 scripts/personal_autofill.py attachments --profile personal
+python3 scripts/personal_autofill.py attachment-path --doc residence_card_front
+python3 scripts/personal_autofill.py detach --doc residence_card_front
+```
+
+Attachments are stored next to the profile (`<profile-dir>/attachments/<profile>/`, mode 600) so they sync with it and never enter Git; metadata lives under `documents.<doc>` in the profile JSON.
+
 Two output modes:
 
 - **`values`** — RAW values, for typing into forms. No fields = a flat `{dotpath: value}` map of all filled low/medium fields (high-sensitivity fields are excluded unless named or `--include-sensitive`).
