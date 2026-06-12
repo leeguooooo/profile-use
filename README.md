@@ -35,6 +35,23 @@ Hard rules baked into the skill (`SKILL.md`):
 
 This public repo contains code, schema, and placeholder templates only. `.gitignore` blocks `*.profile.json`; plaintext personal data never belongs in Git, ours or yours.
 
+### What about the LLM itself, and API relays?
+
+Honest answer — there are three channels, and they are not equally safe:
+
+| Channel | What it sees | Verdict |
+| --- | --- | --- |
+| The helper script (`scripts/profile_use.py`) | Local file I/O only. One file, zero network code — audit it yourself. | Nothing ever leaves your machine through the script. |
+| The model provider (Claude / OpenAI / ...) | Values the agent reads DO enter the conversation context and are sent to the model API over TLS. This is inherent to any LLM-driven autofill. | As trustworthy as your provider's API data policy (major providers don't train on API traffic by default). Redaction-by-default keeps most of the session masked; raw values are fetched per-field, only at the moment of filling. |
+| **Third-party API relays (中转站 / resellers / proxies)** | The **full plaintext** of every request, including any raw value the agent reads. | **Don't.** If you route your agent through a relay you wouldn't hand your ID card to, this skill cannot protect you. Use official endpoints, an enterprise gateway you control, or a locally-hosted model. |
+
+Practical rules:
+
+- Running through an official provider endpoint: the built-in redaction + per-field raw reads + high-sensitivity gates are designed exactly for this case.
+- Running through any relay or unknown proxy: let the agent fill the low-sensitivity fields, and type card numbers / IDs / bank details yourself.
+- Fully local model (Ollama, llama.cpp, ...): nothing leaves the machine at all — the strongest configuration.
+- The skill never bulk-dumps high-sensitivity fields into context: `values` excludes them unless you name a field explicitly, so a single fill exposes only the fields that form actually needed.
+
 ## What it does
 
 <p align="center">
