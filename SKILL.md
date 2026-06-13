@@ -123,6 +123,44 @@ Rules for originals:
 4. Do not attach one-time documents (CAPTCHAs, QR codes, temporary passes). Attach stable identity/payment documents only.
 5. Expired or surrendered documents: `detach` them, or replace with `attach --force` when a renewed card arrives.
 
+## Login Credentials (Bitwarden / Vaultwarden)
+
+Account passwords do **not** live in the profile JSON. They stay in the user's password manager and are read live through `rbw` (a Bitwarden-compatible CLI that also talks to self-hosted Vaultwarden). The skill reads one credential at the moment of fill and never copies it into the profile, memory, logs, or chat.
+
+### Setup is agent-driven — the user only types the master password
+
+Do not hand the user a list of shell commands. When a credential is needed, the agent runs setup itself and stops only at the one step it must never perform (the master-password unlock).
+
+1. Run `vault-status`. If `rbw_installed` is false or `unlocked` is false, set it up — don't ask the user to.
+2. Install + configure in one command (the agent runs this):
+
+   ```bash
+   python3 scripts/profile_use.py vault-setup --install --base-url <server-url> --email <account-email>
+   ```
+
+   `--install` installs rbw via brew/cargo if missing. Get the server URL from the user (or a value they gave earlier, e.g. `https://bit.leeguoo.com`) and the email from `contact.email` if present; ask only for whatever is genuinely unknown.
+3. `vault-setup` reports `next_step`. If it says to run `rbw login`, ask the user to run **that one command themselves** (in the `!` prompt or their terminal) and type their master password. The agent never asks for, runs with, captures, or echoes the master password. Once `rbw-agent` holds the unlock, every later `login` call just works.
+
+After setup, use:
+
+```bash
+python3 scripts/profile_use.py vault-status                       # rbw installed? server? unlocked? (no secrets)
+python3 scripts/profile_use.py login --domain example.com         # redacted: user t***@x.com / password ********
+python3 scripts/profile_use.py login --domain example.com --reveal  # raw user + password — only at the moment of filling
+python3 scripts/profile_use.py login --name "GitHub" --user me@x.com  # target an item directly / pick one account
+python3 scripts/profile_use.py login --domain example.com --deep   # no name match? scan stored URIs (slower)
+```
+
+Matching is by **domain**: the form's host (e.g. `example.com`) is matched against vault item names, including the bare second-level label (`example`). When several items match, the command lists masked candidates and asks you to disambiguate with `--name`/`--user` — it does **not** fetch any password until exactly one item is chosen.
+
+Rules for credentials:
+
+1. Treat every credential as high sensitivity, like `payment`/`bank`. Default to the redacted output; fetch `--reveal` only at the instant you fill the field, and never paste the raw password into a final response.
+2. Do not store, cache, or write credentials anywhere — not the profile JSON, not memory, not a temp file. Re-read from the vault each time.
+3. The vault unlock belongs to `rbw-agent`. Never ask for, capture, store, or echo the master password. If `vault-status` shows `unlocked: false`, ask the user to run `rbw unlock` themselves.
+4. Verify the real domain before filling a password, exactly as for any autofill. Stop on suspicious or typosquatted hosts.
+5. Submitting a login/registration form still requires the user's explicit submit approval.
+
 ## Sync Guidance
 
 Read `references/sync-model.md` when choosing or explaining where profile data should live.
