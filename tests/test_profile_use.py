@@ -208,5 +208,142 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(list(tmp.glob(".*.tmp")), [])
 
 
+class VaultTests(unittest.TestCase):
+    """rbw adapter. The subprocess boundary is mocked; live tests run against a
+    real Vaultwarden separately."""
+
+    def _completed(self, returncode=0, stdout="", stderr=""):
+        import subprocess
+
+        return subprocess.CompletedProcess(args=["rbw"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+    def run_cli(self, *argv):
+        import contextlib
+        import io
+
+        parser = pa.build_parser()
+        args = parser.parse_args(list(argv))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            args.func(args)
+        return out.getvalue()
+
+    def test_normalize_domain_strips_scheme_port_path_www(self):
+        self.assertEqual(pa.normalize_domain("https://www.Example.com:443/login?x=1"), "example.com")
+        self.assertEqual(pa.normalize_domain("user@mail.example.co/path"), "mail.example.co")
+
+    def test_domain_base_takes_last_two_labels(self):
+        self.assertEqual(pa.domain_base("a.b.example.com"), "example.com")
+        self.assertEqual(pa.domain_base("example.com"), "example.com")
+
+    def test_match_entries_by_name_and_base(self):
+        entries = [
+            {"id": "1", "name": "GitHub", "user": "a"},
+            {"id": "2", "name": "login.example.com", "user": "b"},
+            {"id": "3", "name": "unrelated", "user": "c"},
+        ]
+        names = {m["name"] for m in pa.match_entries(entries, "https://example.com/")}
+        self.assertEqual(names, {"login.example.com"})
+
+    def test_parse_rbw_full(self):
+        cred = pa.parse_rbw_full("s3cr3t\nUsername: taro@example.com\nURI: https://example.com\nTOTP: 123456")
+        self.assertEqual(cred["password"], "s3cr3t")
+        self.assertEqual(cred["username"], "taro@example.com")
+        self.assertEqual(cred["uris"], ["https://example.com"])
+        self.assertEqual(cred["totp"], "123456")
+
+    def test_redact_credential_hides_password_and_user(self):
+        red = pa.redact_credential({"password": "s3cr3t", "username": "taro@example.com", "totp": "123456"})
+        self.assertEqual(red["password"], "********")  # fixed width, no length leak
+        self.assertEqual(red["username"], "t***@example.com")
+        self.assertEqual(red["totp"], "present")  # presence only, never the code
+
+    def test_login_redacted_by_default(self):
+        list_out = "1\tExample\ttaro@example.com\n2\tOther\tx\n"
+        full_out = "s3cr3t\nUsername: taro@example.com\nURI: https://example.com"
+
+        def fake_run(*args):
+            if args[0] == "unlocked":
+                return self._completed(0)
+            if args[0] == "list":
+                return self._completed(0, list_out)
+            if args[0] == "get":
+                return self._completed(0, full_out)
+            return self._completed(1, stderr="unexpected")
+
+        with mock.patch.object(pa, "_run_rbw", side_effect=fake_run):
+            import json as _json
+
+            payload = _json.loads(self.run_cli("login", "--domain", "example.com"))
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["item"], "Example")
+            self.assertEqual(payload["password"], "********")
+            self.assertNotIn("s3cr3t", _json.dumps(payload))
+
+            revealed = _json.loads(self.run_cli("login", "--domain", "example.com", "--reveal"))
+            self.assertEqual(revealed["password"], "s3cr3t")
+
+    def test_login_reports_multiple_matches_without_fetching_secrets(self):
+        list_out = "1\texample.com\ta\n2\tlogin.example.com\tb\n"
+
+        def fake_run(*args):
+            if args[0] == "unlocked":
+                return self._completed(0)
+            if args[0] == "list":
+                return self._completed(0, list_out)
+            if args[0] == "get":
+                raise AssertionError("must not fetch a password while ambiguous")
+            return self._completed(1)
+
+        with mock.patch.object(pa, "_run_rbw", side_effect=fake_run):
+            import json as _json
+
+            with self.assertRaises(SystemExit):
+                out = self.run_cli("login", "--domain", "example.com")
+                self.assertFalse(_json.loads(out)["ok"])
+
+    def test_login_errors_when_locked(self):
+        with mock.patch.object(pa, "_run_rbw", return_value=self._completed(1)):
+            with self.assertRaises(SystemExit):
+                self.run_cli("login", "--domain", "example.com")
+
+    def test_missing_rbw_raises_with_install_hint(self):
+        with mock.patch.object(pa.shutil, "which", return_value=None):
+            with self.assertRaises(SystemExit) as ctx:
+                pa._run_rbw("list")
+            self.assertIn("rbw not found", str(ctx.exception))
+
+    def test_vault_setup_configures_and_surfaces_unlock_step(self):
+        calls = []
+
+        def fake_run(*args):
+            calls.append(args)
+            if args[:2] == ("config", "set"):
+                return self._completed(0)
+            if args == ("config", "show"):
+                return self._completed(0, '{"base_url": "https://bit.leeguoo.com", "email": "me@x.com"}')
+            if args == ("unlocked",):
+                return self._completed(1)  # locked
+            return self._completed(1)
+
+        with mock.patch.object(pa.shutil, "which", return_value="/usr/local/bin/rbw"):
+            with mock.patch.object(pa, "_run_rbw", side_effect=fake_run):
+                import json as _json
+
+                out = _json.loads(
+                    self.run_cli("vault-setup", "--base-url", "https://bit.leeguoo.com", "--email", "me@x.com")
+                )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["configured"], ["base_url", "email"])
+        self.assertEqual(out["email"], "m***@x.com")  # masked, never raw
+        self.assertFalse(out["unlocked"])
+        self.assertIn("rbw login", out["next_step"])  # the one human step
+
+    def test_vault_setup_without_install_flag_refuses_when_missing(self):
+        with mock.patch.object(pa.shutil, "which", return_value=None):
+            with self.assertRaises(SystemExit):
+                self.run_cli("vault-setup", "--base-url", "https://x")
+
+
 if __name__ == "__main__":
     unittest.main()

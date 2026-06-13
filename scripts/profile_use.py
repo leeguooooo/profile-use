@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -284,6 +285,197 @@ def mask_tail(value: str, keep: int) -> str:
     return "*" * (len(value) - keep) + value[-keep:]
 
 
+# ---------------------------------------------------------------------------
+# Bitwarden / Vaultwarden vault adapter (read-through; secrets never stored)
+# ---------------------------------------------------------------------------
+#
+# Login credentials belong in the password manager, not in the profile JSON
+# (see references/sync-model.md). This adapter shells out to `rbw` on demand,
+# returns one credential matched by domain, and treats every value it produces
+# as high sensitivity: masked by default, raw only with --reveal, never written
+# to disk or merged into the profile. The unlock lives in rbw-agent; we read it,
+# we do not capture, store, or echo the master password.
+#
+# rbw is installed and configured separately (it is a global tool):
+#   brew install rbw            # or: cargo install rbw
+#   rbw config set base_url https://bit.leeguoo.com
+#   rbw config set email <you@example.com>
+#   rbw login                   # then rbw-agent caches the unlock
+
+
+class VaultError(SystemExit):
+    """rbw is missing, locked, or returned an error. The message carries the fix."""
+
+
+def normalize_domain(raw: str) -> str:
+    """Reduce a URL or host to a bare lowercase registrable host.
+
+    ``https://www.Example.com:443/login?x=1`` -> ``example.com``. Used both to
+    canonicalize the --domain argument and to compare against stored URIs.
+    """
+    text = (raw or "").strip().lower()
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    text = text.split("/", 1)[0].split("?", 1)[0]
+    if "@" in text:  # strip any userinfo
+        text = text.rsplit("@", 1)[1]
+    text = text.split(":", 1)[0]  # strip port
+    if text.startswith("www."):
+        text = text[4:]
+    return text
+
+
+def domain_base(domain: str) -> str:
+    """Loose registrable base: the last two labels (``a.b.example.com`` ->
+    ``example.com``). A secondary, looser matcher only — not eTLD-aware."""
+    labels = [label for label in domain.split(".") if label]
+    if len(labels) <= 2:
+        return domain
+    return ".".join(labels[-2:])
+
+
+def _run_rbw(*args: str) -> subprocess.CompletedProcess:
+    rbw = shutil.which("rbw")
+    if not rbw:
+        raise VaultError(
+            "rbw not found. Install it and point it at your server:\n"
+            "  brew install rbw            # or: cargo install rbw\n"
+            "  rbw config set base_url https://bit.leeguoo.com\n"
+            "  rbw config set email <you@example.com>\n"
+            "  rbw login"
+        )
+    # No stdin: never feed a master password through this process. If the agent
+    # is locked we detect it via `rbw unlocked` first, so rbw never blocks here
+    # waiting on a pinentry prompt.
+    return subprocess.run([rbw, *args], capture_output=True, text=True)
+
+
+def _vault_failure_hint(proc: subprocess.CompletedProcess) -> str:
+    msg = (proc.stderr or proc.stdout or "").strip()
+    low = msg.lower()
+    if "locked" in low or "not logged in" in low or "unlock" in low or "log in" in low:
+        return f"Vault not available: {msg}\nTry: rbw login && rbw unlock"
+    return f"rbw error: {msg or 'unknown failure'}"
+
+
+def vault_unlocked() -> bool:
+    """True when rbw-agent holds an unlocked vault. Does not trigger a prompt."""
+    return _run_rbw("unlocked").returncode == 0
+
+
+def _install_rbw() -> bool:
+    """Best-effort install of rbw via the host's package manager. Inherits stdio
+    so the agent/user sees progress (cargo can take minutes). Returns True if rbw
+    is on PATH afterwards."""
+    if shutil.which("brew"):
+        print("Installing rbw via Homebrew...", file=sys.stderr)
+        if subprocess.run(["brew", "install", "rbw"]).returncode == 0 and shutil.which("rbw"):
+            return True
+    if shutil.which("cargo"):
+        print("Installing rbw via cargo (compiles; may take a few minutes)...", file=sys.stderr)
+        if subprocess.run(["cargo", "install", "rbw"]).returncode == 0 and shutil.which("rbw"):
+            return True
+    return False
+
+
+def rbw_list_entries() -> list[dict[str, str]]:
+    proc = _run_rbw("list", "--fields", "id,name,user")
+    if proc.returncode != 0:
+        raise VaultError(_vault_failure_hint(proc))
+    entries: list[dict[str, str]] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        while len(parts) < 3:
+            parts.append("")
+        entries.append({"id": parts[0], "name": parts[1], "user": parts[2]})
+    return entries
+
+
+def match_entries(entries: list[dict[str, str]], domain: str) -> list[dict[str, str]]:
+    """Entries whose name contains the domain or its registrable base.
+
+    Pure so it can be unit-tested without rbw. The common Vaultwarden case is an
+    item named after the site (``github.com`` / ``GitHub``); URI-only matches are
+    handled by the opt-in deep scan.
+    """
+    norm = normalize_domain(domain)
+    base = domain_base(norm)
+    # The second-level label ("example" from example.com) is how items are most
+    # often named — bare brand, no TLD. Guarded at >= 3 chars so a one-letter SLD
+    # does not match everything; explicit --name covers the odd case.
+    sld = base.split(".", 1)[0]
+    needles = {n for n in (norm, base) if n}
+    if len(sld) >= 3:
+        needles.add(sld)
+    out: list[dict[str, str]] = []
+    for entry in entries:
+        name = (entry.get("name") or "").lower()
+        if any(needle in name for needle in needles):
+            out.append(entry)
+    return out
+
+
+def parse_rbw_full(text: str) -> dict[str, Any]:
+    """Parse ``rbw get --full`` output: password on line 1, then ``Key: value``."""
+    lines = text.splitlines()
+    cred: dict[str, Any] = {"password": lines[0] if lines else "", "username": "", "uris": [], "totp": ""}
+    for line in lines[1:]:
+        if ": " not in line:
+            continue
+        key, value = line.split(": ", 1)
+        key = key.strip().lower()
+        if key == "username":
+            cred["username"] = value
+        elif key == "uri":
+            cred["uris"].append(value)
+        elif key in ("totp", "otp"):
+            cred["totp"] = value
+    return cred
+
+
+def get_credential(name: str, user: str | None = None) -> dict[str, Any]:
+    args = ["get", "--full", name]
+    if user:
+        args.append(user)
+    proc = _run_rbw(*args)
+    if proc.returncode != 0:
+        raise VaultError(_vault_failure_hint(proc))
+    return parse_rbw_full(proc.stdout)
+
+
+def deep_uri_match(entries: list[dict[str, str]], domain: str) -> list[dict[str, str]]:
+    """Slow opt-in fallback: pull each entry's URIs and match the host. Used only
+    when no entry name matched and the user passed --deep."""
+    norm = normalize_domain(domain)
+    hits: list[dict[str, str]] = []
+    for entry in entries:
+        cred = get_credential(entry["name"], entry.get("user") or None)
+        for uri in cred.get("uris", []):
+            host = normalize_domain(uri)
+            if host and (host == norm or host.endswith("." + norm) or norm.endswith("." + host)):
+                hits.append(entry)
+                break
+    return hits
+
+
+def mask_user(user: str) -> str:
+    if not user:
+        return user
+    return redact_email(user) if "@" in user else mask_tail(user, 2)
+
+
+def redact_credential(cred: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "username": mask_user(cred.get("username") or ""),
+        # Fixed-width: never leak the password's length.
+        "password": "********" if cred.get("password") else "",
+        "totp": "present" if cred.get("totp") else None,
+        "uris": cred.get("uris", []),  # host names are not secret
+    }
+
+
 def command_init(args: argparse.Namespace) -> None:
     path = profile_path(args.profile, args.directory)
     if path.exists() and not args.force:
@@ -510,6 +702,146 @@ def command_detach(args: argparse.Namespace) -> None:
     )
 
 
+def command_login(args: argparse.Namespace) -> None:
+    """Return one credential for a site, read live from the vault.
+
+    Default output is redacted (for orienting / reporting back). Pass --reveal to
+    get the raw username/password at the moment you fill the form. Nothing here is
+    ever written to the profile JSON.
+    """
+    if args.name:
+        cred = get_credential(args.name, args.user)
+        payload: dict[str, Any] = {
+            "ok": True,
+            "domain": normalize_domain(args.domain) if args.domain else "",
+            "item": args.name,
+            "match": "name-arg",
+        }
+    else:
+        if not args.domain:
+            raise SystemExit("Provide --domain <host> or --name <item>.")
+        if not vault_unlocked():
+            raise VaultError("Vault is locked. Run: rbw unlock")
+        entries = rbw_list_entries()
+        matches = match_entries(entries, args.domain)
+        if args.user:
+            matches = [m for m in matches if (m.get("user") or "") == args.user]
+        if not matches and args.deep:
+            matches = deep_uri_match(entries, args.domain)
+        if not matches:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "domain": normalize_domain(args.domain),
+                        "reason": "no item whose name contains the domain",
+                        "hint": "retry with --deep to scan stored URIs, or pass --name <item>",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            raise SystemExit(1)
+        if len(matches) > 1:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "domain": normalize_domain(args.domain),
+                        "reason": "multiple matches; disambiguate with --name and/or --user",
+                        "candidates": [
+                            {"name": m["name"], "user": mask_user(m.get("user") or "")} for m in matches
+                        ],
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            raise SystemExit(1)
+        item = matches[0]
+        cred = get_credential(item["name"], item.get("user") or None)
+        payload = {
+            "ok": True,
+            "domain": normalize_domain(args.domain),
+            "item": item["name"],
+            "match": "deep-uri" if args.deep else "domain",
+        }
+    if args.reveal:
+        payload.update(
+            {
+                "username": cred.get("username", ""),
+                "password": cred.get("password", ""),
+                "totp": cred.get("totp") or None,
+                "uris": cred.get("uris", []),
+            }
+        )
+    else:
+        payload.update(redact_credential(cred))
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def command_vault_setup(args: argparse.Namespace) -> None:
+    """Install (with --install) and configure rbw end to end, so the only step
+    left for the human is the master-password unlock — which the agent must never
+    perform. Designed to be driven by the skill, not typed by the user."""
+    if not shutil.which("rbw"):
+        if not args.install:
+            raise VaultError("rbw not found. Re-run with --install (uses brew/cargo), or: brew install rbw")
+        if not _install_rbw():
+            raise VaultError(
+                "Could not install rbw automatically. Install it manually:\n"
+                "  brew install rbw            # or: cargo install rbw"
+            )
+    configured: list[str] = []
+    if args.base_url:
+        proc = _run_rbw("config", "set", "base_url", args.base_url)
+        if proc.returncode != 0:
+            raise VaultError(_vault_failure_hint(proc))
+        configured.append("base_url")
+    if args.email:
+        proc = _run_rbw("config", "set", "email", args.email)
+        if proc.returncode != 0:
+            raise VaultError(_vault_failure_hint(proc))
+        configured.append("email")
+    info: dict[str, Any] = {"ok": True, "rbw_installed": True, "configured": configured}
+    cfg = _run_rbw("config", "show")
+    if cfg.returncode == 0:
+        try:
+            parsed = json.loads(cfg.stdout)
+            info["base_url"] = parsed.get("base_url") or parsed.get("identity_url")
+            email = parsed.get("email")
+            info["email"] = mask_user(email) if email else None
+        except json.JSONDecodeError:
+            info["config_parse_error"] = True
+    unlocked = vault_unlocked()
+    info["unlocked"] = unlocked
+    # The master password is the one thing the agent never handles: surface the
+    # exact command for the human to run, do not run it here.
+    info["next_step"] = None if unlocked else "rbw login   # you type the master password; the agent never sees it"
+    print(json.dumps(info, indent=2, ensure_ascii=False))
+
+
+def command_vault_status(args: argparse.Namespace) -> None:
+    """Report rbw availability, server, and lock state — never any secret."""
+    rbw = shutil.which("rbw")
+    info: dict[str, Any] = {"rbw_installed": bool(rbw), "rbw_path": rbw}
+    if not rbw:
+        info["hint"] = "brew install rbw   (or: cargo install rbw)"
+        print(json.dumps(info, indent=2, ensure_ascii=False))
+        return
+    cfg = _run_rbw("config", "show")
+    if cfg.returncode == 0:
+        try:
+            parsed = json.loads(cfg.stdout)
+            info["base_url"] = parsed.get("base_url") or parsed.get("identity_url")
+            email = parsed.get("email")
+            info["email"] = mask_user(email) if email else None
+        except json.JSONDecodeError:
+            info["config_parse_error"] = True
+    info["unlocked"] = vault_unlocked()
+    print(json.dumps(info, indent=2, ensure_ascii=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", dest="directory", type=Path, help="Profile directory override.")
@@ -601,6 +933,37 @@ def build_parser() -> argparse.ArgumentParser:
     detach.add_argument("--doc", required=True)
     detach.add_argument("--profile", default="personal")
     detach.set_defaults(func=command_detach)
+
+    login = subparsers.add_parser(
+        "login",
+        help="Read one site credential live from the Bitwarden/Vaultwarden vault via rbw (never stored).",
+    )
+    login.add_argument("--domain", help="Site host or URL, e.g. example.com — matched against item names.")
+    login.add_argument("--name", help="Target a vault item by exact name instead of matching by domain.")
+    login.add_argument("--user", help="Disambiguate when one item/domain has several accounts.")
+    login.add_argument("--reveal", action="store_true", help="Return the raw username/password to fill a form.")
+    login.add_argument(
+        "--deep",
+        action="store_true",
+        help="If no item name matches, scan every item's stored URIs (slower).",
+    )
+    login.set_defaults(func=command_login)
+
+    vault_status = subparsers.add_parser(
+        "vault-status", help="Report rbw availability, server URL, and lock state (no secrets)."
+    )
+    vault_status.set_defaults(func=command_vault_status)
+
+    vault_setup = subparsers.add_parser(
+        "vault-setup",
+        help="Install (with --install) and configure rbw for a Bitwarden/Vaultwarden server.",
+    )
+    vault_setup.add_argument("--base-url", dest="base_url", help="Server URL, e.g. https://bit.leeguoo.com.")
+    vault_setup.add_argument("--email", help="Vault account email.")
+    vault_setup.add_argument(
+        "--install", action="store_true", help="Install rbw via brew/cargo if it is missing."
+    )
+    vault_setup.set_defaults(func=command_vault_setup)
 
     return parser
 
