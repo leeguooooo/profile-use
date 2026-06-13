@@ -236,6 +236,22 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(pa.domain_base("a.b.example.com"), "example.com")
         self.assertEqual(pa.domain_base("example.com"), "example.com")
 
+    def test_domain_base_handles_multi_label_public_suffix(self):
+        # Regression: rakuten.co.jp collapsed to "co.jp", matching every .co.jp item.
+        self.assertEqual(pa.domain_base("rakuten.co.jp"), "rakuten.co.jp")
+        self.assertEqual(pa.domain_base("shop.rakuten.co.jp"), "rakuten.co.jp")
+        self.assertEqual(pa.domain_base("example.co.uk"), "example.co.uk")
+
+    def test_match_entries_does_not_match_on_shared_public_suffix(self):
+        # rakuten.co.jp must not pull in unrelated .co.jp items via "co.jp".
+        entries = [
+            {"id": "1", "name": "amazon.co.jp", "user": "a"},
+            {"id": "2", "name": "paypay-sec.co.jp", "user": "b"},
+            {"id": "3", "name": "Rakuten", "user": "c"},
+        ]
+        names = {m["name"] for m in pa.match_entries(entries, "rakuten.co.jp")}
+        self.assertEqual(names, {"Rakuten"})  # the bare-brand item, and nothing else
+
     def test_match_entries_by_name_and_base(self):
         entries = [
             {"id": "1", "name": "GitHub", "user": "a"},

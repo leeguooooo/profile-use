@@ -325,12 +325,31 @@ def normalize_domain(raw: str) -> str:
     return text
 
 
+# Multi-label public suffixes where the last two labels are NOT a registrable
+# domain (rakuten.co.jp's base is rakuten.co.jp, not co.jp). Without this, every
+# .co.jp entry collapses to the needle "co.jp" and matches all of them. Not the
+# full Public Suffix List — just the common ones autofill actually meets.
+_MULTI_LABEL_SUFFIXES = frozenset(
+    {
+        "co.jp", "ne.jp", "or.jp", "go.jp", "ac.jp", "ad.jp", "ed.jp", "gr.jp",
+        "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk",
+        "com.cn", "net.cn", "org.cn", "gov.cn",
+        "com.au", "net.au", "org.au", "co.nz", "co.kr", "or.kr",
+        "com.tw", "com.hk", "com.br", "com.sg", "com.mx",
+    }
+)
+
+
 def domain_base(domain: str) -> str:
-    """Loose registrable base: the last two labels (``a.b.example.com`` ->
-    ``example.com``). A secondary, looser matcher only — not eTLD-aware."""
+    """Loose registrable base: usually the last two labels (``a.b.example.com``
+    -> ``example.com``), but the last *three* when the trailing two form a known
+    multi-label public suffix (``rakuten.co.jp`` -> ``rakuten.co.jp``, not
+    ``co.jp``). A heuristic matcher, not a full eTLD parser."""
     labels = [label for label in domain.split(".") if label]
     if len(labels) <= 2:
         return domain
+    if ".".join(labels[-2:]) in _MULTI_LABEL_SUFFIXES and len(labels) >= 3:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
 
