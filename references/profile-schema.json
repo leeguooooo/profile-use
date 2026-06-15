@@ -35,7 +35,18 @@
         "ward_or_district": { "type": "string", "sensitivity": "medium" },
         "line1": { "type": "string", "sensitivity": "high" },
         "line2": { "type": "string", "sensitivity": "high" },
-        "postal_code": { "type": "string", "sensitivity": "medium" }
+        "postal_code": { "type": "string", "sensitivity": "medium" },
+        "jp": {
+          "type": "object",
+          "description": "Japan-specific address components for forms that split into 都道府県 / 市区町村 / 番地 / 建物名. Prefer these on JP forms; fall back to the generic address.* fields when a jp.* value is absent.",
+          "properties": {
+            "prefecture": { "type": "string", "sensitivity": "medium" },
+            "city": { "type": "string", "sensitivity": "medium" },
+            "banchi": { "type": "string", "sensitivity": "high" },
+            "building": { "type": "string", "sensitivity": "high" },
+            "postal_code_hyphenated": { "type": "string", "sensitivity": "medium" }
+          }
+        }
       }
     },
     "payment": { "type": "object", "sensitivity": "high" },

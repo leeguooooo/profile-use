@@ -51,6 +51,17 @@ class SensitivityMatchTests(unittest.TestCase):
         self.assertTrue(pa.is_high_sensitivity("address.line1"))
         self.assertTrue(pa.is_high_sensitivity("address.line2"))
 
+    def test_jp_street_components_are_high_sensitivity(self):
+        # 番地 / 建物名 are as precise as line1/line2 and must not leak through
+        # the no-field values dump or redacted show.
+        self.assertTrue(pa.is_high_sensitivity("address.jp.banchi"))
+        self.assertTrue(pa.is_high_sensitivity("address.jp.building"))
+        self.assertEqual(pa.redact_value("address.jp.banchi", "1-25-57"), pa.mask_tail("1-25-57", 4))
+        # 都道府県 / 市区町村 stay low sensitivity (like region/city), shown raw for filling.
+        self.assertFalse(pa.is_high_sensitivity("address.jp.prefecture"))
+        self.assertFalse(pa.is_high_sensitivity("address.jp.city"))
+        self.assertEqual(pa.redact_value("address.jp.city", "狛江市西野川"), "狛江市西野川")
+
     def test_document_metadata_is_high_sensitivity(self):
         # Regression: documents.<doc>.label/source carried PII through redacted show.
         self.assertTrue(pa.is_high_sensitivity("documents.residence_card_front.label"))

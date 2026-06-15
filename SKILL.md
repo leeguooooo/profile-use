@@ -91,6 +91,7 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 - `identity.family_name`, `identity.given_name`: split-name fields.
 - `contact.email`, `contact.phone`, `contact.phone_country_code`: email and telephone fields.
 - `address.country`, `address.region`, `address.city`, `address.postal_code`: address fields (low sensitivity). `address.line1`, `address.line2`: the precise street address — high sensitivity, masked in `show` and excluded from the no-field `values` dump.
+- `address.jp.*`: Japan-specific components for forms that split into 都道府県 / 市区町村 / 番地 / 建物名. Map `address.jp.prefecture`→都道府県, `address.jp.city`→市区町村 (note: 市区町村 usually also includes the 町名, e.g. `狛江市西野川`), `address.jp.banchi`→番地 (e.g. `1-25-57`), `address.jp.building`→建物名 (e.g. `402号室`). `banchi`/`building` are high sensitivity (same as `line1`/`line2`); `prefecture`/`city` are low. **Prefer `address.jp.*` on Japanese forms and fall back to the generic `address.*` when a `jp.*` value is absent** — the generic `line1` lumps 町名+丁目+番+号 together, which does not split cleanly onto these fields.
 - `payment.card.*`: card fields; always high sensitivity.
 - `bank.*`: bank transfer or withdrawal fields; always high sensitivity.
 - `government_id.*`, `tax.*`: identity verification fields; always high sensitivity.
