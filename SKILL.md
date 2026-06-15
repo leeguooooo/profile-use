@@ -76,6 +76,17 @@ python3 scripts/profile_use.py get --profile personal identity.name_kana address
 
 Use flexible nested paths when a country, site, or tenant needs a special variant. Examples: `address.jp.*`, `address.us.*`, `contact.work_email`, `invoice.jp.qualified_invoice_name`.
 
+### Proactive Capture (offer to record, don't wait for a form)
+
+Profile growth is not limited to autofill. During **any** task — answering a tax question, reading a chat, helping with onboarding paperwork — durable personal facts surface that the user will likely need again. When that happens, **proactively offer to record them**, then write only after the user agrees:
+
+1. Notice the fact is **stable and reusable**, not one-time. Good: family members' birthdates / relationships, dependent and tax-residency status, employer / salary structure, an HR- or authority-confirmed requirement (what document is needed, who handles it), a recurring address or invoice variant. Skip: one-time codes, transient amounts, session/case context that won't recur.
+2. **Ask before writing.** Say what you'd save and the dotpath (e.g. "记进 `family.father.birthdate` / `tax.jp.dependents.*`?"). Get a yes first; never silently persist. The exception is when the user already said "record this" / "记一下" — then write and report.
+3. Pick a sensible path under an existing section before inventing a new top-level one; flexible nested paths are fine (`family.*`, `tax.jp.dependents.*`). Treat new high-sensitivity paths and any `payment`/`bank`/`government_id`/`tax`/birthdate value as confirmation-gated even when the user broadly agreed to "record stuff".
+4. After writing, confirm with a redacted `list-fields --filled` / `get`, and report the dotpath — not the raw value — back to the user.
+
+Keep all other rules in force: redaction by default, nothing high-sensitivity revealed in the final response, and the profile JSON stays the store of record (not chat, memory, or Git).
+
 ## Fill Workflow
 
 1. Identify the form's site, purpose, and profile to use. Default to `personal` unless the user names another profile such as `work`, `family`, or `jp`.
@@ -91,7 +102,6 @@ Use flexible nested paths when a country, site, or tenant needs a special varian
 - `identity.family_name`, `identity.given_name`: split-name fields.
 - `contact.email`, `contact.phone`, `contact.phone_country_code`: email and telephone fields.
 - `address.country`, `address.region`, `address.city`, `address.postal_code`: address fields (low sensitivity). `address.line1`, `address.line2`: the precise street address — high sensitivity, masked in `show` and excluded from the no-field `values` dump.
-- `address.jp.*`: Japan-specific components for forms that split into 都道府県 / 市区町村 / 番地 / 建物名. Map `address.jp.prefecture`→都道府県, `address.jp.city`→市区町村 (note: 市区町村 usually also includes the 町名, e.g. `狛江市西野川`), `address.jp.banchi`→番地 (e.g. `1-25-57`), `address.jp.building`→建物名 (e.g. `402号室`). `banchi`/`building` are high sensitivity (same as `line1`/`line2`); `prefecture`/`city` are low. **Prefer `address.jp.*` on Japanese forms and fall back to the generic `address.*` when a `jp.*` value is absent** — the generic `line1` lumps 町名+丁目+番+号 together, which does not split cleanly onto these fields.
 - `payment.card.*`: card fields; always high sensitivity.
 - `bank.*`: bank transfer or withdrawal fields; always high sensitivity.
 - `government_id.*`, `tax.*`: identity verification fields; always high sensitivity.
