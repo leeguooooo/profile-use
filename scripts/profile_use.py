@@ -28,6 +28,10 @@ HIGH_SENSITIVITY_PREFIXES = (
     "identity.gender",
     "address.line1",
     "address.line2",
+    # Japan-specific street components (番地 / 建物名) are as precise as
+    # address.line1/line2, so they get the same high-sensitivity treatment.
+    "address.jp.banchi",
+    "address.jp.building",
     # Attachment metadata can carry PII in free-form label/source text, and the
     # schema treats every original document as high sensitivity.
     "documents",
