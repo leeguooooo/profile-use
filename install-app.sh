@@ -11,7 +11,7 @@ trap cleanup EXIT
 echo "Downloading the latest ${APP}…"
 curl -fsSL -o "$TMP/${APP}.dmg" "https://github.com/${REPO}/releases/latest/download/${APP}.dmg"
 pkill -x "$APP" 2>/dev/null || true
-MNT="$(hdiutil attach -nobrowse -noautoopen -quiet "$TMP/${APP}.dmg" | grep -o '/Volumes/.*' | head -1)"
+MNT="$(hdiutil attach -nobrowse -noautoopen "$TMP/${APP}.dmg" | grep -o '/Volumes/.*' | head -1)"
 echo "Installing to /Applications (you may be asked for your password)…"
 sudo rm -rf "/Applications/${APP}.app"
 sudo cp -R "$MNT/${APP}.app" "/Applications/${APP}.app"
