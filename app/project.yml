@@ -16,6 +16,8 @@ targets:
       - path: ProfileUse/App
       - path: ProfileUse/Core
       - path: ProfileUse/UI
+      - path: ../scripts/profile_use.py
+        buildPhase: resources
     info:
       path: ProfileUse/App/Info.plist
       properties:
