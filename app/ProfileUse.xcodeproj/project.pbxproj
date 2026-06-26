@@ -15,6 +15,7 @@
 		63B214D446B7931042A261B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A25FA6244FE907398A486F0 /* main.swift */; };
 		658855EC6F55E816963A097E /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */; };
 		905C3260975337D6FD562F9B /* ProfileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E937F088DA701CBB79FF8118 /* ProfileModel.swift */; };
+		90E4ABDEF777CEFD8514DE62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A24577D28C3729943CAF4D4A /* Assets.xcassets */; };
 		F01F7263E1625636BEC8A987 /* ProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */; };
 /* End PBXBuildFile section */
 
@@ -24,6 +25,7 @@
 		53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditorView.swift; sourceTree = "<group>"; };
 		60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCopyView.swift; sourceTree = "<group>"; };
 		9A25FA6244FE907398A486F0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A24577D28C3729943CAF4D4A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AAA729847E912261090A1FA1 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		C2404BDA22348F98EFCF9C62 /* Redaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Redaction.swift; sourceTree = "<group>"; };
 		C78CAA8C9C4527994BD3D830 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -56,6 +58,7 @@
 		74B6C234420F4CB137072995 /* UI */ = {
 			isa = PBXGroup;
 			children = (
+				A24577D28C3729943CAF4D4A /* Assets.xcassets */,
 				E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */,
 				53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */,
 				E937F088DA701CBB79FF8118 /* ProfileModel.swift */,
@@ -93,6 +96,7 @@
 			buildConfigurationList = 944786F28CBB3646B1E799BD /* Build configuration list for PBXNativeTarget "ProfileUse" */;
 			buildPhases = (
 				10BC9B3EEF9E384946D6BC05 /* Sources */,
+				7546722948D4795AD6074CB6 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -134,6 +138,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7546722948D4795AD6074CB6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				90E4ABDEF777CEFD8514DE62 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		10BC9B3EEF9E384946D6BC05 /* Sources */ = {
