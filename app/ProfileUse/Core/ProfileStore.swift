@@ -127,6 +127,21 @@ final class ProfileDocument {
         ((root["documents"] as? NSDictionary) as? [String: [String: Any]]) ?? [:]
     }
 
+    func setDocument(_ meta: NSDictionary, key: String) {
+        let docs: NSMutableDictionary
+        if let existing = root["documents"] as? NSMutableDictionary {
+            docs = existing
+        } else {
+            docs = NSMutableDictionary()
+            root["documents"] = docs
+        }
+        docs[key] = meta
+    }
+
+    func removeDocument(key: String) {
+        (root["documents"] as? NSMutableDictionary)?.removeObject(forKey: key)
+    }
+
     // MARK: serialize + atomic 0600 write
 
     func save() throws {

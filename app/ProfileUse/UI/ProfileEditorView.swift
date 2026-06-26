@@ -12,8 +12,14 @@ struct ProfileEditorView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            SectionEditor(model: model, section: section)
-                .id("\(model.activeProfile)-\(section)-\(model.docVersion)")
+            Group {
+                if section == "documents" {
+                    DocumentsView(model: model)
+                } else {
+                    SectionEditor(model: model, section: section)
+                }
+            }
+            .id("\(model.activeProfile)-\(section)-\(model.docVersion)")
         }
         .frame(minWidth: 720, minHeight: 540)
         .toolbar {
@@ -62,6 +68,17 @@ struct ProfileEditorView: View {
                 }
                 .tag(s.key)
             }
+            Label {
+                HStack {
+                    Text("Documents")
+                    Spacer()
+                    let n = model.documentCount()
+                    if n > 0 { Text("\(n)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                }
+            } icon: {
+                Image(systemName: "doc.on.doc")
+            }
+            .tag("documents")
         }
         .frame(minWidth: 220)
     }
