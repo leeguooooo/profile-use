@@ -12,7 +12,7 @@ OUT="${SCRIPT_DIR}/build"
 APP="${OUT}/${APP_NAME}.app"
 DMG="${OUT}/${APP_NAME}.dmg"
 
-command -v xcodegen >/dev/null && xcodegen generate --project "${SCRIPT_DIR}" >/dev/null 2>&1 || true
+if command -v xcodegen >/dev/null; then ( cd "${SCRIPT_DIR}" && xcodegen generate >/dev/null ); fi
 mkdir -p "${OUT}"
 rm -rf "${APP}" "${DMG}"
 
