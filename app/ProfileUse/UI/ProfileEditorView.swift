@@ -24,11 +24,13 @@ struct ProfileEditorView: View {
         .frame(minWidth: 720, minHeight: 540)
         .toolbar {
             ToolbarItem(placement: .navigation) { profileMenu }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { model.loginSheet = true } label: { Label("Look up login", systemImage: "key.horizontal") }
                 Button { model.save() } label: { Label("Save", systemImage: "tray.and.arrow.down") }
                     .disabled(!model.dirty)
             }
         }
+        .sheet(isPresented: $model.loginSheet) { LoginLookupSheet(model: model) }
         .safeAreaInset(edge: .bottom) { statusBar }
         .alert("New profile", isPresented: $showNewProfile) {
             TextField("name (letters, numbers, - _)", text: $newProfileName)

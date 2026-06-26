@@ -112,6 +112,40 @@ final class ProfileModel: ObservableObject {
 
     func hide(_ path: String) { revealed.remove(path) }
 
+    // MARK: rbw / Bitwarden credential lookup (read live, never stored)
+
+    @Published var loginSheet = false
+
+    func checkVaultStatus() async -> VaultStatus? {
+        do { return try await CredentialBridge.shared.vaultStatus() }
+        catch { lastError = error.localizedDescription; return nil }
+    }
+
+    func lookupLogin(domain: String) async -> LoginResult? {
+        do { return try await CredentialBridge.shared.login(domain: domain, reveal: false) }
+        catch { lastError = error.localizedDescription; return nil }
+    }
+
+    /// Touch-ID-gated: re-read the raw password live and copy it. Never stored.
+    func copyPassword(domain: String) async {
+        guard await BiometricGate.confirm(reason: "Reveal & copy the password for \(domain)") else { return }
+        do {
+            let r = try await CredentialBridge.shared.login(domain: domain, reveal: true)
+            guard r.ok, let pw = r.password, !pw.isEmpty else { lastError = r.reason ?? "No password found."; return }
+            let pb = NSPasteboard.general; pb.clearContents(); pb.setString(pw, forType: .string)
+            lastMessage = "Copied password for \(domain)."
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func copyUsername(domain: String) async {
+        do {
+            let r = try await CredentialBridge.shared.login(domain: domain, reveal: true)
+            guard r.ok, let u = r.username, !u.isEmpty else { lastError = r.reason ?? "No username found."; return }
+            let pb = NSPasteboard.general; pb.clearContents(); pb.setString(u, forType: .string)
+            lastMessage = "Copied username."
+        } catch { lastError = error.localizedDescription }
+    }
+
     func copy(_ path: String, _ sensitivity: Sensitivity) async {
         let raw = doc.string(path)
         guard !raw.isEmpty else { return }

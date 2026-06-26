@@ -12,11 +12,14 @@
 		30B18DF6EA973964668FDA7E /* Redaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2404BDA22348F98EFCF9C62 /* Redaction.swift */; };
 		36FF430196B174A1A8ACCAA2 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */; };
 		3AA36ECD1B28C843503B728B /* QuickCopyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */; };
+		3CC5C0B9E004C2E6147332BD /* profile_use.py in Resources */ = {isa = PBXBuildFile; fileRef = 235DC60ABF2EA6525956A6D9 /* profile_use.py */; };
 		462DC6F71842949AB017AEF2 /* Schema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A02E4A14DB47849B04FD26E /* Schema.swift */; };
 		63B214D446B7931042A261B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A25FA6244FE907398A486F0 /* main.swift */; };
 		658855EC6F55E816963A097E /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */; };
 		905C3260975337D6FD562F9B /* ProfileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E937F088DA701CBB79FF8118 /* ProfileModel.swift */; };
 		90E4ABDEF777CEFD8514DE62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A24577D28C3729943CAF4D4A /* Assets.xcassets */; };
+		947596D41DE97C91E6DFE977 /* CredentialBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFEC2820B320C2C3D6C9E520 /* CredentialBridge.swift */; };
+		A60C8EF9332B5BC76E301028 /* LoginLookupSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DACFCAB09299A380539E2B4 /* LoginLookupSheet.swift */; };
 		F01F7263E1625636BEC8A987 /* ProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */; };
 		F4D213B5B73FAD35CBCA3EF6 /* Documents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91BD0B748ABBF358F2182F6 /* Documents.swift */; };
 /* End PBXBuildFile section */
@@ -24,12 +27,15 @@
 /* Begin PBXFileReference section */
 		07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
 		0B6820AE72A6B9D6EC55C162 /* TouchID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchID.swift; sourceTree = "<group>"; };
+		235DC60ABF2EA6525956A6D9 /* profile_use.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = profile_use.py; sourceTree = "<group>"; };
 		2A02E4A14DB47849B04FD26E /* Schema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Schema.swift; sourceTree = "<group>"; };
+		4DACFCAB09299A380539E2B4 /* LoginLookupSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginLookupSheet.swift; sourceTree = "<group>"; };
 		53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditorView.swift; sourceTree = "<group>"; };
 		60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCopyView.swift; sourceTree = "<group>"; };
 		9A25FA6244FE907398A486F0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A24577D28C3729943CAF4D4A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AAA729847E912261090A1FA1 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
+		AFEC2820B320C2C3D6C9E520 /* CredentialBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialBridge.swift; sourceTree = "<group>"; };
 		C2404BDA22348F98EFCF9C62 /* Redaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Redaction.swift; sourceTree = "<group>"; };
 		C78CAA8C9C4527994BD3D830 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D6198DA581F40CBEA507670E /* ProfileUse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProfileUse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -47,9 +53,19 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		1AA09EBC8889F54572F23CCF /* scripts */ = {
+			isa = PBXGroup;
+			children = (
+				235DC60ABF2EA6525956A6D9 /* profile_use.py */,
+			);
+			name = scripts;
+			path = ../scripts;
+			sourceTree = "<group>";
+		};
 		5DFF414BE42D3B24B60CD724 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				AFEC2820B320C2C3D6C9E520 /* CredentialBridge.swift */,
 				E91BD0B748ABBF358F2182F6 /* Documents.swift */,
 				AAA729847E912261090A1FA1 /* ProfileStore.swift */,
 				C2404BDA22348F98EFCF9C62 /* Redaction.swift */,
@@ -66,6 +82,7 @@
 				A24577D28C3729943CAF4D4A /* Assets.xcassets */,
 				E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */,
 				07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */,
+				4DACFCAB09299A380539E2B4 /* LoginLookupSheet.swift */,
 				53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */,
 				E937F088DA701CBB79FF8118 /* ProfileModel.swift */,
 				60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */,
@@ -79,6 +96,7 @@
 			children = (
 				B05EF06DFB0A72C94D5CC9E8 /* App */,
 				5DFF414BE42D3B24B60CD724 /* Core */,
+				1AA09EBC8889F54572F23CCF /* scripts */,
 				74B6C234420F4CB137072995 /* UI */,
 				0F0D4D37CAA09ACBC811E629 /* Products */,
 			);
@@ -151,6 +169,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				90E4ABDEF777CEFD8514DE62 /* Assets.xcassets in Resources */,
+				3CC5C0B9E004C2E6147332BD /* profile_use.py in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,9 +180,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				947596D41DE97C91E6DFE977 /* CredentialBridge.swift in Sources */,
 				658855EC6F55E816963A097E /* DesignSystem.swift in Sources */,
 				F4D213B5B73FAD35CBCA3EF6 /* Documents.swift in Sources */,
 				36FF430196B174A1A8ACCAA2 /* DocumentsView.swift in Sources */,
+				A60C8EF9332B5BC76E301028 /* LoginLookupSheet.swift in Sources */,
 				F01F7263E1625636BEC8A987 /* ProfileEditorView.swift in Sources */,
 				905C3260975337D6FD562F9B /* ProfileModel.swift in Sources */,
 				0C90E9CAE1AE6717F556DE0C /* ProfileStore.swift in Sources */,
