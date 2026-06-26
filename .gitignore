@@ -4,3 +4,9 @@ profiles/
 .env
 *.log
 __pycache__/
+
+# macOS app build
+app/build/
+app/.build/
+app/*.xcodeproj/xcuserdata/
+app/*.xcodeproj/project.xcworkspace/xcuserdata/
