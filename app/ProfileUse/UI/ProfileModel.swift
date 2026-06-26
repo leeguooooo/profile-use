@@ -65,6 +65,25 @@ final class ProfileModel: ObservableObject {
         ProfileSchema.fields(in: section).filter { isFilled($0.path) }.count
     }
 
+    // MARK: Documents
+
+    func documents() -> [DocEntry] { DocumentManager.list(profile: activeProfile, doc: doc) }
+    func documentCount() -> Int { doc.documentsMap.count }
+
+    func attachDocument(_ url: URL, key: String? = nil) {
+        do {
+            try DocumentManager.attach(fileURL: url, key: key, profile: activeProfile, doc: doc)
+            lastMessage = "Attached document."; lastError = nil; docVersion += 1
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func removeDocument(_ key: String) {
+        do {
+            try DocumentManager.remove(key: key, profile: activeProfile, doc: doc)
+            lastMessage = "Removed document."; lastError = nil; docVersion += 1
+        } catch { lastError = error.localizedDescription }
+    }
+
     // MARK: Writes
 
     func setString(_ value: String, at path: String) {

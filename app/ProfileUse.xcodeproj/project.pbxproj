@@ -10,6 +10,7 @@
 		0C90E9CAE1AE6717F556DE0C /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA729847E912261090A1FA1 /* ProfileStore.swift */; };
 		27D9AA498C73BF42F77DF168 /* TouchID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6820AE72A6B9D6EC55C162 /* TouchID.swift */; };
 		30B18DF6EA973964668FDA7E /* Redaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2404BDA22348F98EFCF9C62 /* Redaction.swift */; };
+		36FF430196B174A1A8ACCAA2 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */; };
 		3AA36ECD1B28C843503B728B /* QuickCopyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */; };
 		462DC6F71842949AB017AEF2 /* Schema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A02E4A14DB47849B04FD26E /* Schema.swift */; };
 		63B214D446B7931042A261B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A25FA6244FE907398A486F0 /* main.swift */; };
@@ -17,9 +18,11 @@
 		905C3260975337D6FD562F9B /* ProfileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E937F088DA701CBB79FF8118 /* ProfileModel.swift */; };
 		90E4ABDEF777CEFD8514DE62 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A24577D28C3729943CAF4D4A /* Assets.xcassets */; };
 		F01F7263E1625636BEC8A987 /* ProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */; };
+		F4D213B5B73FAD35CBCA3EF6 /* Documents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91BD0B748ABBF358F2182F6 /* Documents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
 		0B6820AE72A6B9D6EC55C162 /* TouchID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchID.swift; sourceTree = "<group>"; };
 		2A02E4A14DB47849B04FD26E /* Schema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Schema.swift; sourceTree = "<group>"; };
 		53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditorView.swift; sourceTree = "<group>"; };
@@ -31,6 +34,7 @@
 		C78CAA8C9C4527994BD3D830 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D6198DA581F40CBEA507670E /* ProfileUse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProfileUse.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		E91BD0B748ABBF358F2182F6 /* Documents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Documents.swift; sourceTree = "<group>"; };
 		E937F088DA701CBB79FF8118 /* ProfileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -46,6 +50,7 @@
 		5DFF414BE42D3B24B60CD724 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				E91BD0B748ABBF358F2182F6 /* Documents.swift */,
 				AAA729847E912261090A1FA1 /* ProfileStore.swift */,
 				C2404BDA22348F98EFCF9C62 /* Redaction.swift */,
 				2A02E4A14DB47849B04FD26E /* Schema.swift */,
@@ -60,6 +65,7 @@
 			children = (
 				A24577D28C3729943CAF4D4A /* Assets.xcassets */,
 				E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */,
+				07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */,
 				53EF860FE95A45A5EF9A63EC /* ProfileEditorView.swift */,
 				E937F088DA701CBB79FF8118 /* ProfileModel.swift */,
 				60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */,
@@ -156,6 +162,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				658855EC6F55E816963A097E /* DesignSystem.swift in Sources */,
+				F4D213B5B73FAD35CBCA3EF6 /* Documents.swift in Sources */,
+				36FF430196B174A1A8ACCAA2 /* DocumentsView.swift in Sources */,
 				F01F7263E1625636BEC8A987 /* ProfileEditorView.swift in Sources */,
 				905C3260975337D6FD562F9B /* ProfileModel.swift in Sources */,
 				0C90E9CAE1AE6717F556DE0C /* ProfileStore.swift in Sources */,
