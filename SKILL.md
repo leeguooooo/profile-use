@@ -111,6 +111,49 @@ Keep all other rules in force: redaction by default, nothing high-sensitivity re
 
 If a site has country-specific formatting rules, preserve the profile value unless the form rejects it. Normalize only after checking the visible validation message.
 
+### Conventional paths for recurring cases
+
+The schema is free-form nested paths, so any of these can be stored today without
+a code change. Use these exact paths anyway. The failure mode is not "the field
+cannot be stored" — it is that each agent invents its own path (`payment.hk_bank`
+one week, `bank.hk` the next), and the next agent cannot find what the last one
+saved. Converging matters more than the names being perfect.
+
+**Names as printed on an ID.** Residence cards, passports and driver's licences
+print a romanised name whose order may not match `identity.family_name` /
+`identity.given_name`. Japanese forms routinely want that exact string in the
+漢字 slot plus a separate kana line.
+
+- `identity.romaji.family_name`, `identity.romaji.given_name`
+- `identity.name_on_id`: the name exactly as printed, including its order
+- `identity.kana.family_name`, `identity.kana.given_name`
+
+**Japanese structured address.** Forms auto-fill 都道府県/市区町村/町域 from the
+郵便番号 and then want only the remainder, "as written on the ID", in full-width
+digits — which cannot be re-derived reliably from `address.line1` / `line2`.
+
+- `address.jp.{prefecture,city,town,chome,banchi,go,building,room}`
+- `address.jp.postal_code_hyphenated` (`100-0001`)
+- `address.jp.kana_remainder`
+
+**Document metadata.** eKYC flows reject cards by issue date and need the card
+number for the IC read, so this saves reopening the image every time. All three
+are high sensitivity.
+
+- `documents.<doc>.{number,issued_on,expires_on}` (ISO dates)
+- `documents.<doc>.proves`: list of what the document evidences, e.g.
+  `[name]` for 在留カード表面 and `[address]` for 裏面. Lets an agent pick the
+  right file for "one document proving name, one proving address" instead of
+  guessing from the label.
+
+**Bank and payout accounts.** Use an array so multiple accounts coexist; always
+high sensitivity.
+
+- `bank.accounts[].{bank_name,account_name,account_number,branch_code,swift,clearing_code,currency,country,label}`
+
+Prefer `bank.*` over a new top-level section — the redaction rules and the
+confirmation gate already key off that prefix.
+
 ## Original Document Images (Attachments)
 
 Some forms need the original image, not extracted text: residence card photos for KYC, bank card photos for payroll, My Number card scans. Keep these originals next to the profile so they sync with it and survive temp-file cleanup:

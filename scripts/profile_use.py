@@ -45,6 +45,15 @@ NAME_FIELDS = (
     "identity.given_name",
     "identity.middle_name",
     "identity.name_kana",
+    # Romanised / kana / as-printed-on-ID name forms are the same legal name in
+    # another script, so they get the same masking. Without these they would
+    # sail through redacted output while identity.full_name was masked — the
+    # residence-card romaji IS the full name (#3).
+    "identity.romaji.family_name",
+    "identity.romaji.given_name",
+    "identity.kana.family_name",
+    "identity.kana.given_name",
+    "identity.name_on_id",
 )
 
 
