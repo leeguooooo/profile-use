@@ -111,6 +111,25 @@ Keep all other rules in force: redaction by default, nothing high-sensitivity re
 
 If a site has country-specific formatting rules, preserve the profile value unless the form rejects it. Normalize only after checking the visible validation message.
 
+### Output formats for `values`
+
+Two flags on `values`, for the two conversions agents kept doing by hand at
+fill time:
+
+- `--phone-format domestic|e164` — `contact.phone` as the trunk-prefixed
+  national number (`07012345678`) or E.164 (`+817012345678`). Only applies when
+  `contact.phone_country_code` is on file; without it there is no honest way to
+  tell `+81 70` from a national `070`, so the value is returned as stored.
+- `--format jp-fullwidth` — ASCII digits, letters and hyphens in every returned
+  string as full-width (`100-0001` → `１００－０００１`, `1番2-3号` →
+  `１番２－３号`) for Japanese forms that reject half-width input. Kana
+  and kanji are untouched.
+
+```bash
+python3 scripts/profile_use.py values contact.phone --phone-format domestic
+python3 scripts/profile_use.py values address.jp.kana_remainder --format jp-fullwidth
+```
+
 ### Conventional paths for recurring cases
 
 The schema is free-form nested paths, so any of these can be stored today without

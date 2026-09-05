@@ -559,6 +559,86 @@ def command_get(args: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+# Output formatting for `values` (#3). Agents were re-deriving these in shell
+# with ad-hoc regexes at the moment of filling — a bank form that wants the
+# domestic 11-digit number, or full-width digits in the address remainder.
+# Both are pure: no profile access, no guessing.
+
+_FULLWIDTH_TABLE = {
+    **{ord(c): chr(ord(c) - 0x20 + 0xFF00) for c in "0123456789"},
+    **{ord(c): chr(ord(c) - 0x20 + 0xFF00) for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+    **{ord(c): chr(ord(c) - 0x20 + 0xFF00) for c in "abcdefghijklmnopqrstuvwxyz"},
+    ord("-"): "\uff0d",
+}
+
+
+def to_fullwidth(value: Any) -> Any:
+    """ASCII digits, letters and hyphens to full-width, recursively.
+
+    Japanese forms that auto-fill the address from the postal code want the
+    remainder "as written on the ID" in full-width: 1番2-3号 becomes
+    １番２－３号. Everything else (kana, kanji, spaces, punctuation)
+    is left alone; non-strings pass through untouched.
+    """
+    if isinstance(value, str):
+        return value.translate(_FULLWIDTH_TABLE)
+    if isinstance(value, list):
+        return [to_fullwidth(item) for item in value]
+    if isinstance(value, dict):
+        return {key: to_fullwidth(item) for key, item in value.items()}
+    return value
+
+
+def format_phone(value: Any, country_code: Any, mode: str) -> Any:
+    """Render a phone number as `domestic` (trunk-prefixed national) or `e164`.
+
+    Only acts when the number is a string AND a country code is known; with no
+    country code there is no honest way to tell +81 70 from a national 070, so
+    the value is returned unchanged rather than guessed. Accepts the usual
+    input shapes: "070-1234-5678", "+81 70 1234 5678", "07012345678",
+    "8170...". Country codes may be given as "81" or "+81".
+    """
+    if not isinstance(value, str) or mode not in ("domestic", "e164"):
+        return value
+    cc = "".join(ch for ch in str(country_code or "") if ch.isdigit())
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if not cc or not digits:
+        return value
+    if value.lstrip().startswith("+") and digits.startswith(cc):
+        national = digits[len(cc):]
+    elif digits.startswith("0"):
+        national = digits[1:]
+    elif digits.startswith(cc) and len(digits) > len(cc) + 6:
+        national = digits[len(cc):]
+    else:
+        national = digits
+    if not national:
+        return value
+    if mode == "domestic":
+        return "0" + national
+    return "+" + cc + national
+
+
+def _is_phone_field(path: str) -> bool:
+    last = path.rsplit(".", 1)[-1]
+    return last == "phone" or last.startswith("phone_") and not last.endswith("country_code")
+
+
+def apply_value_formats(result: dict[str, Any], data: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    phone_mode = getattr(args, "phone_format", None)
+    if phone_mode:
+        try:
+            cc = get_path(data, "contact.phone_country_code")
+        except KeyError:
+            cc = None
+        for path, value in list(result.items()):
+            if _is_phone_field(path):
+                result[path] = format_phone(value, cc, phone_mode)
+    if getattr(args, "format", None) == "jp-fullwidth":
+        result = {path: to_fullwidth(value) for path, value in result.items()}
+    return result
+
+
 def command_values(args: argparse.Namespace) -> None:
     """Return raw (unredacted) values for the agent to type into a form.
 
@@ -583,6 +663,7 @@ def command_values(args: argparse.Namespace) -> None:
             if value in ("", None, [], {}):
                 continue
             result[field] = value
+    result = apply_value_formats(result, data, args)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -913,6 +994,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-sensitive",
         action="store_true",
         help="Include high-sensitivity fields (payment, bank, government_id, tax, birthdate, gender) in a no-field dump.",
+    )
+    values.add_argument(
+        "--phone-format",
+        choices=["domestic", "e164"],
+        help="Render phone fields as the domestic trunk-prefixed number (070…) or E.164 (+8170…). Needs contact.phone_country_code; otherwise left unchanged.",
+    )
+    values.add_argument(
+        "--format",
+        choices=["jp-fullwidth"],
+        help="jp-fullwidth: ASCII digits/letters/hyphens in returned strings as full-width (１－２－３), for Japanese forms.",
     )
     values.set_defaults(func=command_values)
 

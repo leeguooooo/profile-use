@@ -374,3 +374,65 @@ class VaultTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ValueFormatTests(unittest.TestCase):
+    """#3: agents were converting phone numbers and full-width digits in shell
+    with ad-hoc regexes at fill time. `values` now does it, and only when it
+    can do so honestly."""
+
+    def run_cli(self, tmp, *argv):
+        import contextlib
+        import io
+
+        parser = pa.build_parser()
+        args = parser.parse_args(["--dir", str(tmp), *argv])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            args.func(args)
+        return out.getvalue()
+
+    def test_format_phone_domestic_and_e164(self):
+        self.assertEqual(pa.format_phone("070-1234-5678", "81", "domestic"), "07012345678")
+        self.assertEqual(pa.format_phone("070-1234-5678", "+81", "e164"), "+817012345678")
+        self.assertEqual(pa.format_phone("+81 70 1234 5678", "81", "domestic"), "07012345678")
+        self.assertEqual(pa.format_phone("+81 70 1234 5678", "81", "e164"), "+817012345678")
+
+    def test_format_phone_never_guesses_without_a_country_code(self):
+        # +81 70 vs a national 070 cannot be told apart without the code, so
+        # the value must come back untouched rather than mangled.
+        self.assertEqual(pa.format_phone("070-1234-5678", None, "domestic"), "070-1234-5678")
+        self.assertEqual(pa.format_phone("070-1234-5678", "", "e164"), "070-1234-5678")
+        self.assertEqual(pa.format_phone(12345, "81", "e164"), 12345)
+
+    def test_to_fullwidth_matches_the_bank_form(self):
+        self.assertEqual(pa.to_fullwidth("1番2-3号"), "１番２－３号")
+        self.assertEqual(pa.to_fullwidth("100-0001"), "１００－０００１")
+        # Kana/kanji/spaces untouched; nested containers handled; non-strings pass.
+        self.assertEqual(pa.to_fullwidth({"r": ["Room 101", 7]}), {"r": ["Ｒｏｏｍ １０１", 7]})
+
+    def test_values_applies_formats_only_where_they_belong(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.run_cli(tmp, "init", "--profile", "personal")
+            self.run_cli(tmp, "set", "contact.phone", "070-1234-5678")
+            self.run_cli(tmp, "set", "contact.phone_country_code", "81")
+            self.run_cli(tmp, "set", "address.jp.postal_code_hyphenated", "100-0001")
+
+            import json
+
+            out = json.loads(self.run_cli(tmp, "values", "contact.phone", "address.jp.postal_code_hyphenated", "--phone-format", "domestic"))
+            self.assertEqual(out["contact.phone"], "07012345678")
+            # --phone-format must not touch non-phone fields.
+            self.assertEqual(out["address.jp.postal_code_hyphenated"], "100-0001")
+
+            out = json.loads(self.run_cli(tmp, "values", "contact.phone", "--phone-format", "e164"))
+            self.assertEqual(out["contact.phone"], "+817012345678")
+
+            out = json.loads(self.run_cli(tmp, "values", "address.jp.postal_code_hyphenated", "--format", "jp-fullwidth"))
+            self.assertEqual(out["address.jp.postal_code_hyphenated"], "１００－０００１")
+
+            # No country code on file → phone comes back exactly as stored.
+            self.run_cli(tmp, "unset", "contact.phone_country_code")
+            out = json.loads(self.run_cli(tmp, "values", "contact.phone", "--phone-format", "domestic"))
+            self.assertEqual(out["contact.phone"], "070-1234-5678")
