@@ -187,3 +187,23 @@ export PROFILE_USE_DIR="..."   # was PERSONAL_AUTOFILL_DIR
 ## Why do the illustrations look like that
 
 They were drawn the way this project handles your data: locally, badly, and with full transparency.
+
+<!-- use-family -->
+## The `*-use` family
+
+Small, composable CLIs that give an AI agent hands on one real thing. Same shape
+everywhere: `curl … install.sh | sh` to install, `npx skills add leeguooooo/<name>`
+to teach your agent, JSON on stdout.
+
+| Repo | Gives your agent |
+|---|---|
+| [chrome-use](https://github.com/leeguooooo/chrome-use) | A real browser — logged-in sessions, forms, scraping, screenshots |
+| [mail-use](https://github.com/leeguooooo/mail-use) | Email — read, search, send, triage across Gmail / QQ / 163 / any IMAP |
+| [iphone-use](https://github.com/leeguooooo/iphone-use) | A real iPhone — tap, type, screenshot, pull on-device data |
+| [wechat-use](https://github.com/leeguooooo/wechat-use) | WeChat on macOS — send messages, query contacts and history |
+| [discord-use](https://github.com/leeguooooo/discord-use) | Discord — messages, channels, forums, webhooks (REST-only, Rust) |
+| [cookie-use](https://github.com/leeguooooo/cookie-use) | Many logged-in accounts per site — capture, switch, apply sessions |
+| [bitwarden-use](https://github.com/leeguooooo/bitwarden-use) | Bitwarden / Vaultwarden — headless passkey (FIDO2) login |
+| [chatgpt-use](https://github.com/leeguooooo/chatgpt-use) | Your ChatGPT subscription as a coding-agent backend — no API key |
+| [computer-use](https://github.com/leeguooooo/computer-use) | The macOS desktop itself |
+| [pixcake-use](https://github.com/leeguooooo/pixcake-use) | Read-only PixCake probing — snapshot / diff / SQLite inspection |
