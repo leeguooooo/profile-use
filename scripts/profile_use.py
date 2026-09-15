@@ -527,7 +527,8 @@ def deep_uri_match(entries: list[dict[str, str]], domain: str) -> list[dict[str,
 
 
 def mask_user(user: str) -> str:
-    if not user:
+    # bitwarden-use already redacts values it was not asked to reveal.
+    if not user or user == "[redacted]":
         return user
     return redact_email(user) if "@" in user else mask_tail(user, 2)
 
@@ -849,6 +850,52 @@ def command_detach(args: argparse.Namespace) -> None:
     )
 
 
+def _bitwarden_use_domain_login(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Match by stored URI inside bitwarden-use without revealing (no Touch ID), then
+    reveal only the confirmed entry, pinned by id so a sync between the two calls
+    cannot swap in a different one."""
+    if not vault_unlocked():
+        raise VaultError("Vault is locked. Ask the user to run `bitwarden-use unlock` themselves.")
+    domain = normalize_domain(args.domain)
+    probe = _run_rbw("login", "--domain", args.domain, *(["--user", args.user] if args.user else []))
+    # A match comes on stdout; "no match / several" comes on stderr as a JSON
+    # {"candidates": [...]} followed by a plain-text hint, with exit 1.
+    text = probe.stdout.strip() or probe.stderr.strip()
+    try:
+        found, _ = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError as exc:
+        raise VaultError(_vault_failure_hint(probe)) from exc
+    if probe.returncode != 0 or not found.get("id"):
+        candidates = found.get("candidates") or []
+        print(json.dumps({
+            "ok": False,
+            "domain": domain,
+            "reason": "multiple matches; disambiguate with --name and/or --user" if len(candidates) > 1
+            else "no item with a stored URI for this domain",
+            "candidates": [
+                {"name": c.get("name", ""), "user": mask_user(c.get("username") or c.get("user") or "")}
+                for c in candidates
+            ],
+        }, indent=2, ensure_ascii=False))
+        raise SystemExit(1)
+
+    item = found
+    if args.reveal:
+        revealed = _run_rbw("login", "--domain", args.domain, "--name", found["id"], "--reveal")
+        if revealed.returncode != 0:
+            raise VaultError(_vault_failure_hint(revealed))
+        item = json.loads(revealed.stdout)
+        if item.get("id") != found["id"]:
+            raise VaultError("The vault returned a different entry than the one just matched; retry.")
+    cred = {
+        "username": item.get("username") or "",
+        "password": item.get("password") or "",
+        "totp": item.get("code") or "",
+        "uris": [],
+    }
+    return cred, {"ok": True, "domain": domain, "item": found.get("name", ""), "match": "uri"}
+
+
 def command_login(args: argparse.Namespace) -> None:
     """Return one credential for a site, read live from the vault.
 
@@ -856,7 +903,10 @@ def command_login(args: argparse.Namespace) -> None:
     get the raw username/password at the moment you fill the form. Nothing here is
     ever written to the profile JSON.
     """
-    if args.name:
+    if args.domain and not args.name and _is_bitwarden_use():
+        # bitwarden-use matches stored URIs itself, so --deep is never needed here.
+        cred, payload = _bitwarden_use_domain_login(args)
+    elif args.name:
         cred = get_credential(args.name, args.user)
         payload: dict[str, Any] = {
             "ok": True,

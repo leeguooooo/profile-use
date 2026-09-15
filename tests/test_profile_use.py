@@ -408,6 +408,54 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(cred, {"password": "s3cr3t", "username": "taro@example.com",
                                 "uris": ["https://example.com"], "totp": ""})
 
+    def test_bitwarden_use_login_matches_uri_and_reveals_only_the_confirmed_id(self):
+        import json as _json
+
+        calls = []
+
+        def fake_run(*args):
+            calls.append(args)
+            if args[0] == "unlocked":
+                return self._completed(0)
+            if args[0] == "login" and "--reveal" not in args:
+                return self._completed(0, _json.dumps({
+                    "code": None, "id": "uuid-1", "name": "メルカリ",
+                    "password": "[redacted]", "username": "[redacted]"}))
+            if args[0] == "login":
+                return self._completed(0, _json.dumps({
+                    "code": "123456", "id": "uuid-1", "name": "メルカリ",
+                    "password": "s3cr3t", "username": "taro@example.com"}))
+            raise AssertionError(f"unexpected call {args}")
+
+        with mock.patch.object(pa, "rbw_binary", return_value="/x/bitwarden-use"), \
+                mock.patch.object(pa, "_run_rbw", side_effect=fake_run):
+            red = _json.loads(self.run_cli("login", "--domain", "jp.mercari.com"))
+            self.assertEqual((red["item"], red["password"], red["username"]), ("メルカリ", "********", "[redacted]"))
+            self.assertFalse(any("--reveal" in call for call in calls))  # no Touch ID just to orient
+
+            raw = _json.loads(self.run_cli("login", "--domain", "jp.mercari.com", "--reveal"))
+            self.assertEqual((raw["username"], raw["password"], raw["totp"]), ("taro@example.com", "s3cr3t", "123456"))
+            # The reveal is pinned to the id the probe confirmed.
+            self.assertEqual(calls[-1], ("login", "--domain", "jp.mercari.com", "--name", "uuid-1", "--reveal"))
+
+    def test_bitwarden_use_login_lists_candidates_without_revealing(self):
+        import json as _json
+
+        def fake_run(*args):
+            if args[0] == "unlocked":
+                return self._completed(0)
+            if "--reveal" in args:
+                raise AssertionError("must not reveal while ambiguous")
+            # Real bitwarden-use shape: empty stdout, candidates JSON then a hint on stderr.
+            return self._completed(1, "", _json.dumps({"candidates": [
+                {"id": "a", "name": "Example", "username": "[redacted]"},
+                {"id": "b", "name": "Example 2", "username": "[redacted]"}]}) + "\nrbw login: expected one match")
+
+        with mock.patch.object(pa, "rbw_binary", return_value="/x/bitwarden-use"), \
+                mock.patch.object(pa, "_run_rbw", side_effect=fake_run):
+            with self.assertRaises(SystemExit):
+                self.run_cli("login", "--domain", "example.com", "--reveal")
+
     def test_parse_rbw_full(self):
         cred = pa.parse_rbw_full("s3cr3t\nUsername: taro@example.com\nURI: https://example.com\nTOTP: 123456")
         self.assertEqual(cred["password"], "s3cr3t")

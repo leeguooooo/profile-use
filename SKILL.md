@@ -198,7 +198,7 @@ Rules for originals:
 
 ## Login Credentials (Bitwarden / Vaultwarden)
 
-The CLI uses `rbw` when installed and otherwise its fork `bitwarden-use` (same agent and database). With `bitwarden-use`, every read passes `--reveal`, which asks for Touch ID outside its reveal folders; that prompt is intended, never work around it. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
+The CLI uses `rbw` when installed and otherwise its fork `bitwarden-use` (same agent and database). With `bitwarden-use`, every read passes `--reveal`, which asks for Touch ID outside its reveal folders; that prompt is intended, never work around it. Under `bitwarden-use`, `login --domain` matches each entry's stored URIs (so `jp.mercari.com` finds an entry named `メルカリ`), orients without any Touch ID, and on `--reveal` prompts once for the entry it just matched; `--deep` is not needed there. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
 
 Account passwords do **not** live in the profile JSON. They stay in the user's password manager and are read live through `rbw` (a Bitwarden-compatible CLI that also talks to self-hosted Vaultwarden). The skill reads one credential at the moment of fill and never copies it into the profile, memory, logs, or chat.
 
