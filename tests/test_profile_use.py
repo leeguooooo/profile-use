@@ -377,6 +377,24 @@ class VaultTests(unittest.TestCase):
         names = {m["name"] for m in pa.match_entries(entries, "https://example.com/")}
         self.assertEqual(names, {"login.example.com"})
 
+    def test_bitwarden_use_reads_raw_json_with_reveal(self):
+        import json
+
+        raw = json.dumps({
+            "data": {"password": "s3cr3t", "totp": None, "username": "taro@example.com",
+                     "uris": [{"match_type": None, "uri": "https://example.com"}]},
+            "fields": [], "id": "x", "name": "Example", "notes": "",
+        })
+        binary = "/home/u/.local/bin/bitwarden-use"
+        with mock.patch.object(pa, "rbw_binary", return_value=binary), \
+                mock.patch.object(pa.subprocess, "run", return_value=self._completed(stdout=raw)) as run:
+            cred = pa.get_credential("Example")
+            with self.assertRaises(pa.VaultError):
+                pa.deep_uri_match([{"id": "x", "name": "Example", "user": ""}], "example.com")
+        self.assertEqual(run.call_args[0][0], [binary, "get", "--reveal", "--raw", "Example"])
+        self.assertEqual(cred, {"password": "s3cr3t", "username": "taro@example.com",
+                                "uris": ["https://example.com"], "totp": ""})
+
     def test_parse_rbw_full(self):
         cred = pa.parse_rbw_full("s3cr3t\nUsername: taro@example.com\nURI: https://example.com\nTOTP: 123456")
         self.assertEqual(cred["password"], "s3cr3t")

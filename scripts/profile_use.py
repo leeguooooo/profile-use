@@ -369,8 +369,13 @@ def domain_base(domain: str) -> str:
     return ".".join(labels[-2:])
 
 
+def rbw_binary() -> str | None:
+    """rbw, or its fork bitwarden-use (same agent, database and subcommands)."""
+    return shutil.which("rbw") or shutil.which("bitwarden-use")
+
+
 def _run_rbw(*args: str) -> subprocess.CompletedProcess:
-    rbw = shutil.which("rbw")
+    rbw = rbw_binary()
     if not rbw:
         raise VaultError(
             "rbw not found. Install it and point it at your server:\n"
@@ -382,6 +387,10 @@ def _run_rbw(*args: str) -> subprocess.CompletedProcess:
     # No stdin: never feed a master password through this process. If the agent
     # is locked we detect it via `rbw unlocked` first, so rbw never blocks here
     # waiting on a pinentry prompt.
+    if args and args[0] == "get" and Path(rbw).name == "bitwarden-use":
+        # bitwarden-use prints "[redacted]" unless --reveal, which asks for Touch ID
+        # outside its reveal folders. That prompt is intended; never bypass it.
+        args = ("get", "--reveal", *args[1:])
     return subprocess.run([rbw, *args], capture_output=True, text=True)
 
 
@@ -470,19 +479,41 @@ def parse_rbw_full(text: str) -> dict[str, Any]:
     return cred
 
 
+def parse_bitwarden_use_raw(text: str) -> dict[str, Any]:
+    """Parse ``bitwarden-use get --raw --reveal`` JSON. Its --full prints the same
+    JSON rather than rbw's text, so the two binaries never share a parser."""
+    item = json.loads(text)
+    data = item.get("data") or {}
+    return {
+        "password": data.get("password") or "",
+        "username": data.get("username") or "",
+        "uris": [entry["uri"] for entry in data.get("uris") or [] if entry.get("uri")],
+        "totp": data.get("totp") or "",
+    }
+
+
+def _is_bitwarden_use() -> bool:
+    return Path(rbw_binary() or "").name == "bitwarden-use"
+
+
 def get_credential(name: str, user: str | None = None) -> dict[str, Any]:
-    args = ["get", "--full", name]
+    bitwarden_use = _is_bitwarden_use()
+    args = ["get", "--raw" if bitwarden_use else "--full", name]
     if user:
         args.append(user)
     proc = _run_rbw(*args)
     if proc.returncode != 0:
         raise VaultError(_vault_failure_hint(proc))
-    return parse_rbw_full(proc.stdout)
+    return parse_bitwarden_use_raw(proc.stdout) if bitwarden_use else parse_rbw_full(proc.stdout)
 
 
 def deep_uri_match(entries: list[dict[str, str]], domain: str) -> list[dict[str, str]]:
     """Slow opt-in fallback: pull each entry's URIs and match the host. Used only
     when no entry name matched and the user passed --deep."""
+    if _is_bitwarden_use():
+        # URIs are redacted without --reveal, and every --reveal asks for Touch ID:
+        # scanning the whole vault would mean one prompt per entry.
+        raise VaultError("--deep is not available with bitwarden-use. Name the entry with --name instead.")
     norm = normalize_domain(domain)
     hits: list[dict[str, str]] = []
     for entry in entries:
@@ -900,7 +931,7 @@ def command_vault_setup(args: argparse.Namespace) -> None:
     """Install (with --install) and configure rbw end to end, so the only step
     left for the human is the master-password unlock — which the agent must never
     perform. Designed to be driven by the skill, not typed by the user."""
-    if not shutil.which("rbw"):
+    if not rbw_binary():
         if not args.install:
             raise VaultError("rbw not found. Re-run with --install (uses brew/cargo), or: brew install rbw")
         if not _install_rbw():
@@ -939,7 +970,7 @@ def command_vault_setup(args: argparse.Namespace) -> None:
 
 def command_vault_status(args: argparse.Namespace) -> None:
     """Report rbw availability, server, and lock state — never any secret."""
-    rbw = shutil.which("rbw")
+    rbw = rbw_binary()
     info: dict[str, Any] = {"rbw_installed": bool(rbw), "rbw_path": rbw}
     if not rbw:
         info["hint"] = "brew install rbw   (or: cargo install rbw)"
