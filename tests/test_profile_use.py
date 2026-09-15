@@ -328,6 +328,19 @@ class VaultTests(unittest.TestCase):
     """rbw adapter. The subprocess boundary is mocked; live tests run against a
     real Vaultwarden separately."""
 
+    def setUp(self):
+        # These tests speak rbw's text format, so resolve the CLI as rbw whatever
+        # this machine has installed (bitwarden-use has its own test). Tests that
+        # mock shutil.which to simulate "not installed" still go through the mock.
+        real_which = pa.shutil.which
+
+        def binary():
+            return "/usr/local/bin/rbw" if pa.shutil.which is real_which else pa.shutil.which("rbw")
+
+        patcher = mock.patch.object(pa, "rbw_binary", side_effect=binary)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _completed(self, returncode=0, stdout="", stderr=""):
         import subprocess
 
