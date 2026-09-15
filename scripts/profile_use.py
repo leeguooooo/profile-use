@@ -9,9 +9,12 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -1088,13 +1091,392 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vault_setup.set_defaults(func=command_vault_setup)
 
+    leak_scan = subparsers.add_parser(
+        "leak-scan",
+        help="Fail if any real profile value appears in files, stdin, staged changes, or history. Prints dot-paths, never values.",
+    )
+    leak_scan.add_argument("paths", nargs="*", type=Path, help="Files or directories to scan.")
+    leak_scan.add_argument("--profile", default="personal")
+    leak_scan.add_argument("--all-profiles", action="store_true", help="Check against every *.profile.json in the profile directory.")
+    source = leak_scan.add_mutually_exclusive_group()
+    source.add_argument("--stdin", action="store_true", help="Scan text piped on stdin.")
+    source.add_argument("--staged", action="store_true", help="Scan lines added in `git diff --cached` (the pre-commit hook).")
+    source.add_argument("--history", action="store_true", help="Scan lines added anywhere in `git log --all`.")
+    leak_scan.add_argument("--label", default="<stdin>", help="Name to report for --stdin input, e.g. the staged file's path.")
+    leak_scan.add_argument("--json", action="store_true", help="Accepted for callers that ask for JSON; output is always JSON.")
+    leak_scan.set_defaults(func=command_leak_scan)
+
+    add_backup_parsers(subparsers)
+
     return parser
+
+
+# leak-scan: real profile values must never reach Git. Doc and test examples
+# once carried the real postal code, city and street numbers in reshaped forms
+# (full-width digits, 番/号 instead of hyphens), so matching runs on normalised
+# text and on fragments of address/name values, not only on whole values.
+
+LEAK_SKIP_FIELDS = (
+    "profile_name",
+    "preferences",
+    "government_id.type",
+    "contact.phone_country_code",
+    "identity.preferred_name",
+)
+# Attachment bookkeeping uses conventional names and dates that docs repeat.
+LEAK_SKIP_LEAVES = ("file", "added", "sha256", "label", "mime")
+LEAK_FRAGMENT_SECTIONS = ("address", "identity", "family", "employment", "government_id")
+LEAK_GENERIC = {"東京都", "大阪府", "神奈川県", "北海道", "株式会社", "在留カード"}
+LEAK_ALLOW_MARKER = "profile-use: allow"
+_DASHES = str.maketrans({c: "-" for c in "‐‑‒–—―−"})
+_DATE_RE = re.compile(r"^\d{4}-\d{1,2}(-\d{1,2})?$")
+
+
+def _leak_normalize(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text).translate(_DASHES).casefold()
+    # 1丁目2番3号 / 2番3-101号 → 1-2-3 / 2-3-101
+    text = re.sub(r"(丁目|番地|番|号室|号|の)(?=\d)", "-", text)
+    return re.sub(r"(?<=\d)(丁目|番地|号室|番|号)", "", text)
+
+
+def leak_needles(data: Any) -> dict[str, str]:
+    """Distinctive normalised fragments of every filled value → the dot-path they came from."""
+    needles: dict[str, str] = {}
+
+    def add(needle: str, path: str, minimum: int = 5) -> None:
+        if len(needle) >= minimum and needle not in LEAK_GENERIC:
+            needles.setdefault(needle, path)
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                walk(item, f"{path}.{key}" if path else key)
+            return
+        if isinstance(value, list):
+            for item in value:
+                walk(item, path)
+            return
+        if value is None or isinstance(value, bool) or value == "":
+            return
+        if matches_prefix(path, LEAK_SKIP_FIELDS) or path.rsplit(".", 1)[-1] in LEAK_SKIP_LEAVES:
+            return
+        norm = _leak_normalize(str(value)).strip()
+        add(norm, path)
+        if path.split(".")[0] not in LEAK_FRAGMENT_SECTIONS:
+            return
+        cjk_min = 2 if matches_prefix(path, NAME_FIELDS) else 3
+        for run in re.findall(r"[぀-ヿ一-鿿]+", norm):
+            add(run, path, cjk_min)
+        for chain in re.findall(r"\d+(?:-\d+)+", norm):
+            if _DATE_RE.match(chain):
+                continue
+            add(chain, path)
+            parts = chain.split("-")
+            for left, right in zip(parts, parts[1:]):
+                if len(left) + len(right) >= 4:
+                    add(f"{left}-{right}", path, 0)
+
+    walk(data, "")
+    return needles
+
+
+def _leak_patterns(needles: dict[str, str]) -> list[tuple[re.Pattern[str], str]]:
+    patterns = []
+    for needle, path in needles.items():
+        body = re.escape(needle)
+        if needle[:1].isascii() and needle[:1].isalnum():
+            body = r"(?<![0-9a-z])" + body
+        if needle[-1:].isascii() and needle[-1:].isalnum():
+            body = body + r"(?![0-9a-z])"
+        patterns.append((re.compile(body), path))
+    return patterns
+
+
+def _leak_lines_from_paths(paths: list[Path]):
+    for root in paths:
+        files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file() and ".git" not in p.parts)
+        for file in files:
+            raw = file.read_bytes()
+            if b"\0" in raw[:8192]:
+                continue
+            for number, line in enumerate(raw.decode("utf-8", errors="ignore").splitlines(), 1):
+                yield f"{file}:{number}", line
+
+
+def _leak_lines_from_git(args: list[str]):
+    """Added lines from a unified diff (`git diff`/`git log -p`), labelled commit/file:line."""
+    out = subprocess.run(["git", *args], capture_output=True, text=True, errors="replace")
+    if out.returncode != 0:
+        raise SystemExit(out.stderr.strip() or "git failed")
+    commit, file, number = "", "", 0
+    for line in out.stdout.splitlines():
+        if line.startswith("COMMIT "):
+            commit = line[7:] + " "
+        elif line.startswith("+++ "):
+            file = line[6:] if line.startswith("+++ b/") else line[4:]
+        elif line.startswith("@@"):
+            match = re.search(r"\+(\d+)", line)
+            number = int(match.group(1)) if match else 0
+        elif line.startswith("+"):
+            yield f"{commit}{file}:{number}", line[1:]
+            number += 1
+
+
+def command_leak_scan(args: argparse.Namespace) -> None:
+    directory = args.directory or default_dir()
+    if args.all_profiles:
+        files = sorted(directory.glob("*.profile.json"))
+    else:
+        files = [p for p in [profile_path(args.profile, directory)] if p.exists()]
+    if not files:
+        # No local profile (CI, another contributor): nothing to compare against.
+        # Exit 2 lets callers tell "skipped" apart from clean (0) and leak (1).
+        print(json.dumps({"clean": True, "skipped": "no profile found", "directory": str(directory)}))
+        raise SystemExit(2)
+    needles: dict[str, str] = {}
+    for file in files:
+        for needle, path in leak_needles(json.loads(file.read_text(encoding="utf-8"))).items():
+            needles.setdefault(needle, f"{file.name.removesuffix('.profile.json')}:{path}")
+    patterns = _leak_patterns(needles)
+
+    if args.stdin:
+        lines = ((f"{args.label}:{n}", line) for n, line in enumerate(sys.stdin.read().splitlines(), 1))
+    elif args.staged:
+        lines = _leak_lines_from_git(["diff", "--cached", "-U0", "--no-color", "--diff-filter=ACMR"])
+    elif args.history:
+        lines = _leak_lines_from_git(["log", "-p", "--all", "-U0", "--no-color", "--format=COMMIT %h"])
+    elif args.paths:
+        lines = _leak_lines_from_paths(args.paths)
+    else:
+        raise SystemExit("leak-scan: pass paths, --stdin, --staged, or --history.")
+
+    hits: list[dict[str, str]] = []
+    for where, line in lines:
+        if LEAK_ALLOW_MARKER in line:
+            continue
+        norm = _leak_normalize(line)
+        for pattern, path in patterns:
+            if pattern.search(norm):
+                hits.append({"where": where, "field": path})
+    result: dict[str, Any] = {"clean": not hits, "profiles": [f.name for f in files], "needles": len(needles), "hits": hits}
+    if hits:
+        result["hint"] = (
+            "Real profile values found. Replace them with placeholders (e.g. 100-0001, 1-2-3); "
+            f"mark a genuine false positive with '{LEAK_ALLOW_MARKER}' on that line."
+        )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if hits:
+        raise SystemExit(1)
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     args.func(args)
+
+
+# backup / restore: the profile directory, age-encrypted, in a private Git repo
+# (default ~/github.com/profile-use-data). Only ciphertext and the recipient
+# public key are committed. Blob names are random ids, so file names, which
+# carry context, stay inside the encrypted manifest. A local state file next to
+# the profiles lets unchanged files skip re-encryption: age output is
+# randomised, so re-encrypting everything would churn every blob in Git.
+
+BACKUP_REPO_DEFAULT = Path.home() / "github.com" / "profile-use-data"
+BACKUP_IDENTITY_DEFAULT = Path.home() / ".config" / "profile-use-backup" / "identity.txt"
+BACKUP_STATE = ".backup-state.json"
+
+
+def backup_repo(args: argparse.Namespace) -> Path:
+    return Path(args.repo or os.environ.get("PROFILE_USE_BACKUP_REPO") or BACKUP_REPO_DEFAULT).expanduser()
+
+
+def _age(*argv: str, data: bytes | None = None) -> bytes:
+    age = shutil.which("age")
+    if not age:
+        raise SystemExit(
+            "age is not installed: brew install age  (Linux: apt install age · Windows: winget install FiloSottile.age)"
+        )
+    proc = subprocess.run([age, *argv], input=data, capture_output=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"age failed: {proc.stderr.decode(errors='replace').strip()}")
+    return proc.stdout
+
+
+def _git(repo: Path, *argv: str, check: bool = True) -> subprocess.CompletedProcess:
+    proc = subprocess.run(["git", "-C", str(repo), *argv], capture_output=True, text=True)
+    if check and proc.returncode != 0:
+        raise SystemExit(f"git {' '.join(argv)} failed: {proc.stderr.strip()}")
+    return proc
+
+
+def _write_private(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _backup_sources(directory: Path) -> dict[str, Path]:
+    """Every file under the profile directory except dotfiles (state, temp writes, .DS_Store)."""
+    return {
+        path.relative_to(directory).as_posix(): path
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(directory).parts)
+    }
+
+
+def command_backup(args: argparse.Namespace) -> None:
+    directory = args.directory or default_dir()
+    repo = backup_repo(args)
+    recipients = repo / "recipients.txt"
+    if not recipients.exists():
+        raise SystemExit(
+            f"No {recipients}. Clone the data repo first (gh repo clone <owner>/profile-use-data {repo}) or pass --repo."
+        )
+    if not args.no_push:
+        _git(repo, "pull", "--rebase", "--quiet", check=False)  # an empty remote has nothing to pull yet
+    state_path = directory / BACKUP_STATE
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    blobs = repo / "blobs"
+    blobs.mkdir(exist_ok=True)
+
+    manifest: dict[str, dict[str, Any]] = {}
+    changed = 0
+    for rel, path in _backup_sources(directory).items():
+        digest = sha256_file(path)
+        entry = state.get(rel)
+        if not entry or entry.get("sha256") != digest or not (blobs / f"{entry['id']}.age").exists():
+            entry = {"id": entry["id"] if entry else secrets.token_hex(12), "sha256": digest}
+            _age("-R", str(recipients), "-o", str(blobs / f"{entry['id']}.age"), str(path))
+            changed += 1
+        manifest[rel] = {"id": entry["id"], "sha256": digest, "size": path.stat().st_size}
+
+    live = {entry["id"] for entry in manifest.values()}
+    stale = [blob for blob in blobs.glob("*.age") if blob.stem not in live]
+    for blob in stale:
+        blob.unlink()
+    manifest_file = repo / "manifest.json.age"
+    if changed or stale or set(manifest) != set(state) or not manifest_file.exists():
+        payload = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+        manifest_file.write_bytes(_age("-R", str(recipients), data=payload))
+    write_json(state_path, {rel: {"id": e["id"], "sha256": e["sha256"]} for rel, e in manifest.items()})
+
+    _git(repo, "add", "-A", "--", "blobs", "manifest.json.age", "recipients.txt")
+    committed = _git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0
+    if committed:
+        _git(repo, "commit", "-q", "-m", f"backup: {len(manifest)} files, {changed} changed, {len(stale)} removed")
+    pushed = False
+    if not args.no_push and _git(repo, "rev-parse", "HEAD", check=False).returncode == 0:
+        _git(repo, "push", "-q", "-u", "origin", "HEAD")
+        pushed = True
+    print(json.dumps({
+        "repo": str(repo), "files": len(manifest), "changed": changed,
+        "removed": len(stale), "committed": committed, "pushed": pushed,
+    }, indent=2))
+
+
+def _backup_identity(args: argparse.Namespace) -> bytes:
+    if args.identity_rbw:
+        try:
+            # Check first so a locked vault never leaves rbw blocked on a pinentry prompt.
+            if not vault_unlocked():
+                raise SystemExit("Vault is locked. Ask the user to run `rbw unlock` themselves, then retry.")
+            proc = _run_rbw("get", args.identity_rbw)
+        except VaultError as exc:
+            raise SystemExit(str(exc)) from exc
+        if proc.returncode != 0:
+            raise SystemExit(_vault_failure_hint(proc))
+        text = proc.stdout
+    else:
+        path = Path(args.identity or os.environ.get("PROFILE_USE_BACKUP_IDENTITY") or BACKUP_IDENTITY_DEFAULT).expanduser()
+        if not path.exists():
+            raise SystemExit(
+                f"No age identity at {path}. Pass --identity FILE, or --identity-rbw '<vault item>' after `rbw unlock`."
+            )
+        text = path.read_text(encoding="utf-8")
+    keys = [line.strip() for line in text.splitlines() if line.strip().startswith("AGE-SECRET-KEY-")]
+    if not keys:
+        raise SystemExit("The identity holds no AGE-SECRET-KEY- line.")
+    return ("\n".join(keys) + "\n").encode()
+
+
+def command_restore(args: argparse.Namespace) -> None:
+    repo = backup_repo(args)
+    target = Path(args.to or args.directory or default_dir()).expanduser()
+    if not args.no_pull:
+        _git(repo, "pull", "--rebase", "--quiet")
+    manifest_file = repo / "manifest.json.age"
+    if not manifest_file.exists():
+        raise SystemExit(f"No backup in {repo} (manifest.json.age is missing).")
+    identity = _backup_identity(args)
+    restored, unchanged, conflicts = 0, 0, []
+    with tempfile.TemporaryDirectory() as tmp:
+        # The key only ever touches a private temp file, never the target or the repo.
+        ident = Path(tmp) / "identity"
+        fd = os.open(ident, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(identity)
+        manifest = json.loads(_age("-d", "-i", str(ident), str(manifest_file)))
+        for rel, entry in manifest.items():
+            if Path(rel).is_absolute() or ".." in Path(rel).parts:
+                raise SystemExit(f"Refusing unsafe manifest path: {rel!r}")
+            dest = target / rel
+            if dest.exists():
+                if sha256_file(dest) == entry["sha256"]:
+                    unchanged += 1
+                    continue
+                if not args.force:
+                    conflicts.append(rel)
+                    continue
+            data = _age("-d", "-i", str(ident), str(repo / "blobs" / f"{entry['id']}.age"))
+            if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+                raise SystemExit(f"Checksum mismatch for {rel}: the backup is corrupt.")
+            _write_private(dest, data)
+            for parent in Path(rel).parents:
+                try:
+                    (target / parent).chmod(0o700)
+                except OSError:
+                    pass
+            restored += 1
+    result: dict[str, Any] = {
+        "target": str(target), "files": len(manifest), "restored": restored,
+        "unchanged": unchanged, "conflicts": conflicts,
+    }
+    if conflicts:
+        result["hint"] = "These local files differ from the backup; re-run with --force to overwrite them."
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if conflicts:
+        raise SystemExit(1)
+
+
+def add_backup_parsers(subparsers: Any) -> None:
+    backup = subparsers.add_parser(
+        "backup", help="Encrypt the profile directory (profiles + attachments) with age into the private data repo; commit and push."
+    )
+    backup.add_argument("--repo", help=f"Data repo checkout. Default: $PROFILE_USE_BACKUP_REPO, else {BACKUP_REPO_DEFAULT}.")
+    backup.add_argument("--no-push", action="store_true", help="Commit locally without pulling or pushing.")
+    backup.set_defaults(func=command_backup)
+
+    restore = subparsers.add_parser(
+        "restore", help="Decrypt the backup into the profile directory (or --to DIR). Works on any OS with python3, git and age."
+    )
+    restore.add_argument("--repo", help="Data repo checkout (same default as backup).")
+    restore.add_argument("--to", type=Path, help="Restore here instead of the profile directory.")
+    identity = restore.add_mutually_exclusive_group()
+    identity.add_argument(
+        "--identity", help=f"age identity file. Default: $PROFILE_USE_BACKUP_IDENTITY, else {BACKUP_IDENTITY_DEFAULT}."
+    )
+    identity.add_argument("--identity-rbw", help="Read the identity from this Bitwarden/Vaultwarden item via rbw.")
+    restore.add_argument("--force", action="store_true", help="Overwrite local files that differ from the backup.")
+    restore.add_argument("--no-pull", action="store_true", help="Use the checkout as is.")
+    restore.set_defaults(func=command_restore)
 
 
 if __name__ == "__main__":

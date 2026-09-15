@@ -38,6 +38,111 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(pa.redact_value("address.line1", "1-2-3 Shibuya"), "*********buya")
 
 
+class LeakScanTests(unittest.TestCase):
+    # Placeholder data only — the scanner compares against whatever profile is on disk.
+    PROFILE = {
+        "identity": {"full_name": "Yamada Taro"},
+        "address": {
+            "postal_code": "150-0002",
+            "city": "渋谷区",
+            "line1": "渋谷1丁目23番45号",
+            "jp": {"postal_code_hyphenated": "150-0002"},
+        },
+        "contact": {"email": "taro@example.com", "phone_country_code": "+81"},
+        "documents": {"bank_card": {"file": "bank_card.jpg", "label": "キャッシュカード"}},
+    }
+
+    def scan(self, text, profile=True):
+        import contextlib
+        import io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            if profile:
+                pa.write_json(tmp / "personal.profile.json", self.PROFILE)
+            doc = tmp / "doc.md"
+            doc.write_text(text, encoding="utf-8")
+            args = pa.build_parser().parse_args(["--dir", str(tmp), "leak-scan", str(doc)])
+            out, code = io.StringIO(), 0
+            with contextlib.redirect_stdout(out):
+                try:
+                    args.func(args)
+                except SystemExit as exc:
+                    code = exc.code
+            return code, out.getvalue()
+
+    def test_reshaped_street_numbers_are_caught(self):
+        # Regression: a full-width, hyphenated fragment of the real 番地 shipped in help text.
+        code, out = self.scan("full-width (２３－４５), for Japanese forms")
+        self.assertEqual(code, 1)
+        self.assertIn("personal:address.line1", out)
+
+    def test_postal_code_city_and_name_are_caught_without_echoing_values(self):
+        code, out = self.scan("type #postal 150-0002\nwriting 渋谷区 failed\nby yamada taro\n")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.count('"where"'), 3)
+        for value in ("150-0002", "渋谷", "Yamada", "yamada"):
+            self.assertNotIn(value, out)
+
+    def test_conventional_names_and_dialing_codes_do_not_fire(self):
+        code, _ = self.scan("attach bank_card.jpg (キャッシュカード), dial +81 then 1-2-3\n")
+        self.assertEqual(code, 0)
+
+    def test_allow_marker_and_missing_profile(self):
+        self.assertEqual(self.scan("150-0002  <!-- profile-use: allow -->")[0], 0)
+        # Exit 2 = nothing to compare against; callers (memory-use, the hook) treat it as a skip.
+        code, out = self.scan("150-0002", profile=False)
+        self.assertEqual(code, 2)
+        self.assertIn("no profile found", out)
+
+
+@unittest.skipUnless(__import__("shutil").which("age") and __import__("shutil").which("age-keygen"), "age not installed")
+class BackupTests(unittest.TestCase):
+    def cli(self, directory, *argv):
+        import contextlib
+        import io
+        import json
+
+        args = pa.build_parser().parse_args(["--dir", str(directory), *argv])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            args.func(args)
+        return json.loads(out.getvalue())
+
+    def test_backup_restore_roundtrip_hides_names_and_skips_unchanged(self):
+        import json
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src, repo, out = tmp / "profiles", tmp / "data", tmp / "restored"
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["age-keygen", "-o", str(tmp / "id.txt")], check=True, capture_output=True)
+            pub = subprocess.run(["age-keygen", "-y", str(tmp / "id.txt")], check=True, capture_output=True, text=True)
+            (repo / "recipients.txt").write_text(pub.stdout)
+            pa.write_json(src / "personal.profile.json", {"identity": {"full_name": "Yamada Taro"}})
+            card = src / "attachments" / "personal" / "residence_card_front.jpg"
+            card.parent.mkdir(parents=True)
+            card.write_bytes(b"\xff\xd8 fake image")
+
+            first = self.cli(src, "backup", "--repo", str(repo), "--no-push")
+            self.assertEqual((first["files"], first["changed"], first["committed"]), (2, 2, True))
+            committed = b"".join(p.read_bytes() for p in repo.rglob("*") if p.is_file() and ".git" not in p.parts)
+            for plain in (b"Yamada", b"residence_card", b"personal.profile", b"fake image"):
+                self.assertNotIn(plain, committed)
+
+            second = self.cli(src, "backup", "--repo", str(repo), "--no-push")
+            self.assertEqual((second["changed"], second["committed"]), (0, False))
+
+            result = self.cli(src, "restore", "--repo", str(repo), "--to", str(out), "--identity", str(tmp / "id.txt"), "--no-pull")
+            self.assertEqual(result["restored"], 2)
+            self.assertEqual((out / "attachments" / "personal" / "residence_card_front.jpg").read_bytes(), b"\xff\xd8 fake image")
+            restored = out / "personal.profile.json"
+            self.assertEqual(json.loads(restored.read_text())["identity"]["full_name"], "Yamada Taro")
+            self.assertEqual(restored.stat().st_mode & 0o777, 0o600)
+            self.assertEqual((out / "attachments").stat().st_mode & 0o777, 0o700)
+
+
 class SensitivityMatchTests(unittest.TestCase):
     def test_segment_aware_prefix(self):
         self.assertTrue(pa.is_high_sensitivity("payment.card.number"))

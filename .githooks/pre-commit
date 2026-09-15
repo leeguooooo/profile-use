@@ -1,0 +1,12 @@
+#!/bin/sh
+# Block commits that carry any real value from the local profile (see `profile_use.py leak-scan`).
+# Silent when clean; prints the offending file:line and dot-path (never the value) otherwise.
+# Exit 2 means no local profile to compare against (CI, another contributor): let the commit through.
+ROOT=$(git rev-parse --show-toplevel)
+out=$(python3 "$ROOT/scripts/profile_use.py" leak-scan --staged --all-profiles)
+case $? in
+  0|2) exit 0 ;;
+  *) echo "$out" >&2
+     echo "pre-commit: real profile data in staged changes — commit blocked." >&2
+     exit 1 ;;
+esac

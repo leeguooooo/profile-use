@@ -1,6 +1,6 @@
 ---
 name: profile-use
-description: Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git.
+description: Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git. Also use leak-scan before committing to any repo that might echo personal data. Not for infra/NAS/VPN notes or "how did we do X" history — that is memory-use.
 ---
 
 # Profile Use
@@ -233,6 +233,33 @@ Rules for credentials:
 3. The vault unlock belongs to `rbw-agent`. Never ask for, capture, store, or echo the master password. If `vault-status` shows `unlocked: false`, ask the user to run `rbw unlock` themselves.
 4. Verify the real domain before filling a password, exactly as for any autofill. Stop on suspicious or typosquatted hosts.
 5. Submitting a login/registration form still requires the user's explicit submit approval.
+
+## profile-use vs memory-use
+
+Two stores, split by what the fact is about:
+
+| The fact is… | Store |
+|---|---|
+| About the person: name, address, phone, IDs, bank/card, family, health, employment contracts, document scans | profile-use |
+| About how things were done: NAS, VPN, servers, ports, configs, decisions, rollbacks, todos | memory-use (`leeguooooo/personal-memory`) |
+
+Rule of thumb: if it would be typed into a form or must be redacted in a summary, it belongs here. If a future session reads it to operate a machine, it belongs in memory-use. memory-use notes never hold personal values, only pointers such as "in profile-use `bank.accounts[0]`". When one task produces both (new-computer setup needs a VPN note and a restored profile), write each to its own store.
+
+## Leak Scan
+
+The code repo is public. Real values once reached it as doc and test examples in reshaped form (full-width digits, 番/号 instead of hyphens), so every commit is now checked against the real profile:
+
+```bash
+./install.sh                                              # once per checkout: link the skill, enable the pre-commit hook
+python3 scripts/profile_use.py leak-scan --staged         # what the hook runs
+python3 scripts/profile_use.py leak-scan --history        # audit every commit
+python3 scripts/profile_use.py leak-scan docs/ README.md  # files or directories
+some-command | python3 scripts/profile_use.py leak-scan --stdin
+```
+
+It normalises full-width text and 丁目/番/号, matches whole values plus address and name fragments, prints `file:line` and the dot-path, never the value, and exits 1 on a hit. Any other repo (memory-use, a public tool's docs) can call it before committing; with no local profile it exits 0.
+
+Examples in docs and tests must use placeholders (`100-0001`, `千代田区千代田`, `1-2-3`, `Yamada Taro`), never a value copied from a real form. Mark a genuine false positive with `profile-use: allow` on that line.
 
 ## Sync Guidance
 
