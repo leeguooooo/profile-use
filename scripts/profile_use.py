@@ -1243,6 +1243,11 @@ def leak_needles(data: Any) -> dict[str, str]:
             return
         norm = _leak_normalize(str(value)).strip()
         add(norm, path)
+        # Phone, postal and account numbers get retyped without separators
+        # (070-1234-5678 → 07012345678, 100-0001 → 1000001), so also match the bare digits.
+        digits = re.sub(r"\D", "", norm)
+        if len(digits) >= 7 and re.fullmatch(r"[\d\s()+\-.]+", norm):
+            add(digits, path)
         if path.split(".")[0] not in LEAK_FRAGMENT_SECTIONS:
             return
         cjk_min = 2 if matches_prefix(path, NAME_FIELDS) else 3

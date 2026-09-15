@@ -84,6 +84,13 @@ class LeakScanTests(unittest.TestCase):
         for value in ("150-0002", "渋谷", "Yamada", "yamada"):
             self.assertNotIn(value, out)
 
+    def test_numbers_retyped_without_separators_are_caught(self):
+        # Regression: a bare-digit postal code in an issue body slipped past the scan.
+        code, out = self.scan("the 〒 field shows 1500002 correctly")
+        self.assertEqual(code, 1)
+        self.assertIn("personal:address.postal_code", out)
+        self.assertNotIn("1500002", out)
+
     def test_conventional_names_and_dialing_codes_do_not_fire(self):
         code, _ = self.scan("attach bank_card.jpg (キャッシュカード), dial +81 then 1-2-3\n")
         self.assertEqual(code, 0)
