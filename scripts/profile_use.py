@@ -35,6 +35,9 @@ HIGH_SENSITIVITY_PREFIXES = (
     # address.line1/line2, so they get the same high-sensitivity treatment.
     "address.jp.banchi",
     "address.jp.building",
+    # Plate, VIN, engine number and the registration address identify the owner as
+    # precisely as an ID number.
+    "vehicles",
     # Attachment metadata can carry PII in free-form label/source text, and the
     # schema treats every original document as high sensitivity.
     "documents",

@@ -225,6 +225,7 @@ class SensitivityMatchTests(unittest.TestCase):
         self.assertTrue(pa.is_high_sensitivity("payment.card.number"))
         self.assertTrue(pa.is_high_sensitivity("tax"))
         self.assertFalse(pa.is_high_sensitivity("taxonomy"))  # must not over-match
+        self.assertTrue(pa.is_high_sensitivity("vehicles.motorcycle.vin"))
         self.assertFalse(pa.is_high_sensitivity("address.city"))
 
     def test_street_address_is_high_sensitivity(self):
