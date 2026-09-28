@@ -263,6 +263,12 @@ It normalises full-width text and 丁目/番/号, matches whole values plus addr
 
 Examples in docs and tests must use placeholders (`100-0001`, `千代田区千代田`, `1-2-3`, `Yamada Taro`), never a value copied from a real form. Mark a genuine false positive with `profile-use: allow` on that line.
 
+## Upgrade
+
+When a `profile_use.py` command prints `profile-use has a newer version on GitHub`, tell the user and offer to run `python3 scripts/profile_use.py upgrade`. It refreshes every installed copy of this skill: `git pull --ff-only` for a checkout, `claude plugin update` for the Claude Code plugin, and it prints `npx skills update profile-use` for a copied folder. Check without changing anything: `upgrade --check` (or `--json`). The user may also just say "升级 profile-use".
+
+Whole family: `curl -fsSL https://raw.githubusercontent.com/leeguooooo/plugins/main/upgrade-use-family.sh | sh`.
+
 ## Sync Guidance
 
 Read `references/sync-model.md` when choosing or explaining where profile data should live.

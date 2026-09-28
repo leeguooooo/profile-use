@@ -150,6 +150,76 @@ class BackupTests(unittest.TestCase):
             self.assertEqual((out / "attachments").stat().st_mode & 0o777, 0o700)
 
 
+class UpgradeTests(unittest.TestCase):
+    def test_skill_copies_reports_each_channel_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude" / "plugins").mkdir(parents=True)
+            (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+                '{"version": 2, "plugins": {"profile-use@leeguooooo-plugins": []}}')
+            copy = home / ".agents" / "skills" / "profile-use"
+            copy.mkdir(parents=True)
+            (copy / "SKILL.md").write_text("skill")
+            (home / ".claude" / "skills").mkdir(parents=True)
+            (home / ".claude" / "skills" / "profile-use").symlink_to(copy)  # same folder, reported once
+            not_git = home / "elsewhere"
+            not_git.mkdir()
+            found = pa.skill_copies(home=home, root=not_git)
+        self.assertEqual([c["channel"] for c in found], ["claude-plugin", "copy"])
+        self.assertEqual(found[0]["update"], "claude plugin update profile-use@leeguooooo-plugins")
+
+    def notice(self, cache, now, remote_sha, have_commit, env=None):
+        import contextlib
+        import io
+        import subprocess
+
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if "rev-parse" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "/repo\n", "")
+            if "ls-remote" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, f"{remote_sha}\trefs/heads/main\n", "")
+            if "cat-file" in cmd:
+                return subprocess.CompletedProcess(cmd, 0 if have_commit else 1, "", "")
+            raise AssertionError(f"unexpected {cmd}")
+
+        clean = {k: v for k, v in os.environ.items() if k not in ("CI", "PROFILE_USE_NO_UPDATE_CHECK", "USE_NO_UPDATE_CHECK")}
+        clean.update({"XDG_CACHE_HOME": cache, **(env or {})})
+        err, out = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, clean, clear=True), \
+                mock.patch.object(pa.subprocess, "run", side_effect=fake_run), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            pa.print_update_notice(now=now)
+        return err.getvalue(), out.getvalue(), calls
+
+    def test_notice_goes_to_stderr_once_and_is_throttled_for_a_day(self):
+        with tempfile.TemporaryDirectory() as cache:
+            err, out, calls = self.notice(cache, 1_000_000, "a" * 40, have_commit=False)
+            self.assertIn("profile-use has a newer version on GitHub", err)
+            self.assertEqual(out, "")
+            self.assertTrue(any("ls-remote" in c for c in calls))
+            # Within 24 h: the cached answer is reused, no network call.
+            err, _, calls = self.notice(cache, 1_000_000 + 3600, "b" * 40, have_commit=False)
+            self.assertIn("newer version", err)
+            self.assertFalse(any("ls-remote" in c for c in calls))
+            # After 24 h it checks again.
+            _, _, calls = self.notice(cache, 1_000_000 + 25 * 3600, "b" * 40, have_commit=False)
+            self.assertTrue(any("ls-remote" in c for c in calls))
+
+    def test_no_notice_when_checkout_already_has_the_commit(self):
+        with tempfile.TemporaryDirectory() as cache:
+            err, _, _ = self.notice(cache, 1_000_000, "a" * 40, have_commit=True)
+        self.assertEqual(err, "")
+
+    def test_opt_out_skips_the_check_entirely(self):
+        for key in ("CI", "PROFILE_USE_NO_UPDATE_CHECK", "USE_NO_UPDATE_CHECK"):
+            with tempfile.TemporaryDirectory() as cache:
+                err, _, calls = self.notice(cache, 1_000_000, "a" * 40, have_commit=False, env={key: "1"})
+            self.assertEqual((err, calls), ("", []), key)
+
+
 class SensitivityMatchTests(unittest.TestCase):
     def test_segment_aware_prefix(self):
         self.assertTrue(pa.is_high_sensitivity("payment.card.number"))

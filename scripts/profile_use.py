@@ -1188,6 +1188,7 @@ def build_parser() -> argparse.ArgumentParser:
     leak_scan.set_defaults(func=command_leak_scan)
 
     add_backup_parsers(subparsers)
+    add_upgrade_parser(subparsers)
 
     return parser
 
@@ -1358,6 +1359,8 @@ def command_leak_scan(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.func is not command_upgrade:
+        print_update_notice()
     args.func(args)
 
 
@@ -1563,6 +1566,147 @@ def add_backup_parsers(subparsers: Any) -> None:
     restore.add_argument("--force", action="store_true", help="Overwrite local files that differ from the backup.")
     restore.add_argument("--no-pull", action="store_true", help="Use the checkout as is.")
     restore.set_defaults(func=command_restore)
+
+
+# upgrade: profile-use ships no binary; the install is wherever the skill folder lives.
+# Refresh each copy through the channel it came from, per the family convention in
+# leeguooooo/plugins docs/upgrade.md.
+
+UPDATE_REMOTE_REF = "refs/heads/main"
+UPDATE_TTL = 24 * 3600
+
+
+def _git_toplevel(path: Path) -> str | None:
+    proc = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def skill_copies(home: Path | None = None, root: Path | None = None) -> list[dict[str, str]]:
+    """Every installed copy of the skill, with the channel that refreshes it."""
+    home = home or Path.home()
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    try:
+        data = json.loads((home / ".claude" / "plugins" / "installed_plugins.json").read_text(encoding="utf-8"))
+        keys = data.get("plugins", data) if isinstance(data, dict) else {}
+        for key in keys:
+            if str(key).startswith("profile-use@"):
+                found.append({"channel": "claude-plugin", "path": str(key), "update": f"claude plugin update {key}"})
+    except (OSError, ValueError):
+        pass
+    candidates = [root or ROOT] + [home / base / "profile-use" for base in (".agents/skills", ".claude/skills", ".codex/skills")]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        top = _git_toplevel(candidate.resolve())
+        key = top or str(candidate.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if top:
+            found.append({"channel": "git", "path": top, "update": f"git -C {top} pull --ff-only"})
+        elif (candidate / "SKILL.md").exists() and ".claude/plugins/cache" not in key:
+            found.append({"channel": "copy", "path": key, "update": "npx skills update profile-use"})
+    return found
+
+
+def _behind(top: str) -> int | None:
+    fetch = subprocess.run(["git", "-C", top, "fetch", "-q", "origin"], capture_output=True, text=True, timeout=30)
+    if fetch.returncode != 0:
+        return None
+    count = subprocess.run(["git", "-C", top, "rev-list", "--count", "HEAD..@{u}"], capture_output=True, text=True)
+    return int(count.stdout.strip()) if count.returncode == 0 and count.stdout.strip().isdigit() else None
+
+
+def command_upgrade(args: argparse.Namespace) -> None:
+    copies = skill_copies()
+    failed = False
+    if args.check or args.json:
+        for copy in copies:
+            if copy["channel"] == "git":
+                behind = _behind(copy["path"])
+                copy["behind"] = behind
+                failed = failed or behind is None
+        head = _git_toplevel(ROOT)
+        current = subprocess.run(["git", "-C", head, "rev-parse", "--short", "HEAD"], capture_output=True,
+                                 text=True).stdout.strip() if head else None
+        result = {
+            "name": "profile-use",
+            "current": current,
+            "update_available": any((c.get("behind") or 0) > 0 for c in copies),
+            "skills": copies,
+        }
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            for copy in copies:
+                state = {None: "check failed", 0: "up to date"}.get(copy.get("behind"), f"{copy.get('behind')} commits behind") \
+                    if copy["channel"] == "git" else f"refresh with: {copy['update']}"
+                print(f"profile-use [{copy['channel']}] {copy['path']}: {state}")
+        if failed:
+            raise SystemExit(2)
+        return
+    for copy in copies:
+        if copy["channel"] == "git":
+            proc = subprocess.run(["git", "-C", copy["path"], "pull", "--ff-only"], capture_output=True, text=True)
+            ok = proc.returncode == 0
+            failed = failed or not ok
+            print(f"profile-use [git] {copy['path']}: " + ((proc.stdout.strip().splitlines() or ["updated"])[-1] if ok
+                                                             else "not updated: " + proc.stderr.strip()))
+        elif copy["channel"] == "claude-plugin" and shutil.which("claude"):
+            proc = subprocess.run(["claude", "plugin", "update", copy["path"]], capture_output=True, text=True)
+            failed = failed or proc.returncode != 0
+            print(f"profile-use [claude-plugin]: " + (proc.stdout.strip().splitlines() or [proc.stderr.strip()])[-1])
+        else:
+            print(f"profile-use [{copy['channel']}] {copy['path']}: run `{copy['update']}`")
+    if not copies:
+        print("profile-use: no installed copy found")
+    if failed:
+        raise SystemExit(2)
+
+
+def print_update_notice(now: float | None = None) -> None:
+    """At most once a day, say on stderr that GitHub has newer commits than this checkout."""
+    if any(os.environ.get(k) for k in ("CI", "PROFILE_USE_NO_UPDATE_CHECK", "USE_NO_UPDATE_CHECK")):
+        return
+    top = _git_toplevel(ROOT)
+    if not top:
+        return  # plugin cache or copied folder: `upgrade` handles those
+    now = now or datetime.datetime.now().timestamp()
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "profile-use" / "update-check.json"
+    try:
+        state = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    latest = state.get("latest")
+    if now - float(state.get("checked_at", 0)) >= UPDATE_TTL:
+        try:
+            proc = subprocess.run(["git", "-C", top, "ls-remote", "origin", UPDATE_REMOTE_REF],
+                                  capture_output=True, text=True, timeout=2)
+            latest = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.strip() else latest
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({"checked_at": now, "latest": latest}), encoding="utf-8")
+        except OSError:
+            pass
+    if not latest:
+        return
+    # A commit this checkout already has is not news (a dev checkout ahead of main included).
+    have = subprocess.run(["git", "-C", top, "cat-file", "-e", f"{latest}^{{commit}}"], capture_output=True)
+    if have.returncode != 0:
+        print("profile-use has a newer version on GitHub. Upgrade: python3 scripts/profile_use.py upgrade",
+              file=sys.stderr)
+
+
+def add_upgrade_parser(subparsers: Any) -> None:
+    upgrade = subparsers.add_parser(
+        "upgrade", help="Refresh every installed copy of this skill (git checkout, Claude Code plugin, copied folder)."
+    )
+    upgrade.add_argument("--check", action="store_true", help="Report what is out of date; change nothing.")
+    upgrade.add_argument("--json", action="store_true", help="Like --check, as JSON.")
+    upgrade.set_defaults(func=command_upgrade)
 
 
 if __name__ == "__main__":
