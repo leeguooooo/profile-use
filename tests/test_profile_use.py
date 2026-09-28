@@ -91,6 +91,14 @@ class LeakScanTests(unittest.TestCase):
         self.assertIn("personal:address.postal_code", out)
         self.assertNotIn("1500002", out)
 
+    def test_record_descriptors_are_not_needles(self):
+        # Regression: `proves: ["address", ...]` made every "email address" in a README a hit.
+        profile = dict(self.PROFILE, documents={"card": {"proves": ["name", "address"], "number": "X1234567"}},
+                       vehicles={"bike": {"documents": ["vehicle_license_front"], "dimensions_mm": "1985x720x1170"}})
+        with mock.patch.object(self, "PROFILE", profile):
+            self.assertEqual(self.scan("the email address and the image dimensions; see vehicle_license_front")[0], 0)
+            self.assertEqual(self.scan("card X1234567")[0], 1)
+
     def test_conventional_names_and_dialing_codes_do_not_fire(self):
         code, _ = self.scan("attach bank_card.jpg (キャッシュカード), dial +81 then 1-2-3\n")
         self.assertEqual(code, 0)

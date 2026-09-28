@@ -1208,8 +1208,9 @@ LEAK_SKIP_FIELDS = (
     "contact.phone_country_code",
     "identity.preferred_name",
 )
-# Attachment bookkeeping uses conventional names and dates that docs repeat.
-LEAK_SKIP_LEAVES = ("file", "added", "sha256", "label", "mime")
+# Attachment bookkeeping uses conventional names and dates that docs repeat; `proves`
+# ("name", "address") and `documents` (doc keys) describe a record, they are not data.
+LEAK_SKIP_LEAVES = ("file", "added", "sha256", "label", "mime", "proves", "documents")
 LEAK_FRAGMENT_SECTIONS = ("address", "identity", "family", "employment", "government_id")
 LEAK_GENERIC = {"東京都", "大阪府", "神奈川県", "北海道", "株式会社", "在留カード"}
 LEAK_ALLOW_MARKER = "profile-use: allow"
