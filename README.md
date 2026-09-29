@@ -184,6 +184,8 @@ mv "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-a
 export PROFILE_USE_DIR="..."   # was PERSONAL_AUTOFILL_DIR
 ```
 
+Maintainers: `scripts/release.sh <version> [notes.md]` bumps the app version, builds `ProfileUse.dmg`, publishes the release with it, then syncs the plugin marketplace.
+
 ## Why do the illustrations look like that
 
 They were drawn the way this project handles your data: locally, badly, and with full transparency.
