@@ -52,7 +52,7 @@ Use 1Password, Bitwarden, Apple Passwords, or another password manager for:
 
 The skill can fill low-sensitivity fields from the local JSON profile and ask the user to approve or provide high-sensitivity values from the password manager at the point of use.
 
-For Bitwarden and self-hosted **Vaultwarden**, this is wired up: `profile_use.py login --domain <host>` reads a single credential live through the `rbw` CLI and returns it redacted by default (raw only with `--reveal`). Passwords are never copied into the profile JSON — the vault stays the single source of truth, and the unlock lives in `rbw-agent`. See the "Login Credentials" section of `SKILL.md` for setup and usage.
+For Bitwarden and self-hosted **Vaultwarden**, this is wired up: `profile_use.py login --domain <host>` reads a single credential live through the `bitwarden-use` CLI (or plain `rbw`) and returns it redacted by default (raw only with `--reveal`). Passwords are never copied into the profile JSON — the vault stays the single source of truth, and the unlock lives in its background agent. See the "Login Credentials" section of `SKILL.md` for setup and usage.
 
 ## Environment Variables
 

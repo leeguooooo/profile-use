@@ -410,6 +410,31 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(list(tmp.glob(".*.tmp")), [])
 
 
+class VaultCliLookupTests(unittest.TestCase):
+    """Which vault CLI is used, and what fix hints name."""
+
+    def test_prefers_bitwarden_use_then_local_install_then_rbw(self):
+        both = {"bitwarden-use": "/opt/bin/bitwarden-use", "rbw": "/opt/bin/rbw"}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(pa.Path, "home", return_value=Path(tmp)):
+            with mock.patch.object(pa.shutil, "which", side_effect=both.get):
+                self.assertEqual(pa.rbw_binary(), "/opt/bin/bitwarden-use")
+                self.assertEqual(pa.vault_cli(), "bitwarden-use")
+            with mock.patch.object(pa.shutil, "which", side_effect={"rbw": "/opt/bin/rbw"}.get):
+                self.assertEqual(pa.rbw_binary(), "/opt/bin/rbw")
+                self.assertEqual(pa.vault_cli(), "rbw")
+                # install.sh's target wins over rbw even when not on PATH yet
+                local = Path(tmp) / ".local" / "bin" / "bitwarden-use"
+                local.parent.mkdir(parents=True)
+                local.write_text("#!/bin/sh\n")
+                local.chmod(0o755)
+                self.assertEqual(pa.rbw_binary(), str(local))
+            with mock.patch.object(pa.shutil, "which", return_value=None):
+                local.unlink()
+                self.assertIsNone(pa.rbw_binary())
+                self.assertEqual(pa.vault_cli(), "bitwarden-use")
+
+
 class VaultTests(unittest.TestCase):
     """rbw adapter. The subprocess boundary is mocked; live tests run against a
     real Vaultwarden separately."""
@@ -608,7 +633,8 @@ class VaultTests(unittest.TestCase):
         with mock.patch.object(pa.shutil, "which", return_value=None):
             with self.assertRaises(SystemExit) as ctx:
                 pa._run_rbw("list")
-            self.assertIn("rbw not found", str(ctx.exception))
+            self.assertIn("bitwarden-use not found", str(ctx.exception))
+            self.assertIn("bitwarden-use/main/install.sh | sh", str(ctx.exception))
 
     def test_vault_setup_configures_and_surfaces_unlock_step(self):
         calls = []

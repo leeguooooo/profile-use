@@ -309,21 +309,24 @@ def mask_tail(value: str, keep: int) -> str:
 # ---------------------------------------------------------------------------
 #
 # Login credentials belong in the password manager, not in the profile JSON
-# (see references/sync-model.md). This adapter shells out to `rbw` on demand,
+# (see references/sync-model.md). This adapter shells out to bitwarden-use
+# (`bwu`, a fork of rbw; plain `rbw` still works as a fallback) on demand,
 # returns one credential matched by domain, and treats every value it produces
 # as high sensitivity: masked by default, raw only with --reveal, never written
-# to disk or merged into the profile. The unlock lives in rbw-agent; we read it,
-# we do not capture, store, or echo the master password.
+# to disk or merged into the profile. The unlock lives in the background agent;
+# we read it, we do not capture, store, or echo the master password.
 #
-# rbw is installed and configured separately (it is a global tool):
-#   brew install rbw            # or: cargo install rbw
-#   rbw config set base_url https://bit.leeguoo.com
-#   rbw config set email <you@example.com>
-#   rbw login                   # then rbw-agent caches the unlock
+# bitwarden-use is installed and configured separately (it is a global tool):
+#   curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitwarden-use/main/install.sh | sh
+#   bitwarden-use config set base_url https://bit.leeguoo.com
+#   bitwarden-use config set email <you@example.com>
+#   bitwarden-use login         # then the agent caches the unlock
+
+BWU_INSTALL = "curl -fsSL https://raw.githubusercontent.com/leeguooooo/bitwarden-use/main/install.sh | sh"
 
 
 class VaultError(SystemExit):
-    """rbw is missing, locked, or returned an error. The message carries the fix."""
+    """The vault CLI is missing, locked, or returned an error. The message carries the fix."""
 
 
 def normalize_domain(raw: str) -> str:
@@ -373,22 +376,34 @@ def domain_base(domain: str) -> str:
 
 
 def rbw_binary() -> str | None:
-    """rbw, or its fork bitwarden-use (same agent, database and subcommands)."""
-    return shutil.which("rbw") or shutil.which("bitwarden-use")
+    """bitwarden-use, else plain rbw (its upstream: same agent, database and
+    subcommands). install.sh puts bitwarden-use in ~/.local/bin, which may not
+    be on this process's PATH right after installing."""
+    local = Path.home() / ".local" / "bin" / "bitwarden-use"
+    return (
+        shutil.which("bitwarden-use")
+        or (str(local) if local.is_file() and os.access(local, os.X_OK) else None)
+        or shutil.which("rbw")
+    )
+
+
+def vault_cli() -> str:
+    """Command name to show in fix hints: the installed CLI, bitwarden-use if none."""
+    return "rbw" if Path(rbw_binary() or "").name == "rbw" else "bitwarden-use"
 
 
 def _run_rbw(*args: str) -> subprocess.CompletedProcess:
     rbw = rbw_binary()
     if not rbw:
         raise VaultError(
-            "rbw not found. Install it and point it at your server:\n"
-            "  brew install rbw            # or: cargo install rbw\n"
-            "  rbw config set base_url https://bit.leeguoo.com\n"
-            "  rbw config set email <you@example.com>\n"
-            "  rbw login"
+            "bitwarden-use not found. Install it and point it at your server:\n"
+            f"  {BWU_INSTALL}\n"
+            "  bitwarden-use config set base_url https://bit.leeguoo.com\n"
+            "  bitwarden-use config set email <you@example.com>\n"
+            "  bitwarden-use login"
         )
     # No stdin: never feed a master password through this process. If the agent
-    # is locked we detect it via `rbw unlocked` first, so rbw never blocks here
+    # is locked we detect it via `unlocked` first, so the CLI never blocks here
     # waiting on a pinentry prompt.
     if args and args[0] == "get" and Path(rbw).name == "bitwarden-use":
         # bitwarden-use prints "[redacted]" unless --reveal, which asks for Touch ID
@@ -401,28 +416,26 @@ def _vault_failure_hint(proc: subprocess.CompletedProcess) -> str:
     msg = (proc.stderr or proc.stdout or "").strip()
     low = msg.lower()
     if "locked" in low or "not logged in" in low or "unlock" in low or "log in" in low:
-        return f"Vault not available: {msg}\nTry: rbw login && rbw unlock"
-    return f"rbw error: {msg or 'unknown failure'}"
+        cli = vault_cli()
+        return f"Vault not available: {msg}\nTry: {cli} login && {cli} unlock"
+    return f"{vault_cli()} error: {msg or 'unknown failure'}"
 
 
 def vault_unlocked() -> bool:
-    """True when rbw-agent holds an unlocked vault. Does not trigger a prompt."""
+    """True when the agent holds an unlocked vault. Does not trigger a prompt."""
     return _run_rbw("unlocked").returncode == 0
 
 
 def _install_rbw() -> bool:
-    """Best-effort install of rbw via the host's package manager. Inherits stdio
-    so the agent/user sees progress (cargo can take minutes). Returns True if rbw
-    is on PATH afterwards."""
-    if shutil.which("brew"):
-        print("Installing rbw via Homebrew...", file=sys.stderr)
-        if subprocess.run(["brew", "install", "rbw"]).returncode == 0 and shutil.which("rbw"):
-            return True
-    if shutil.which("cargo"):
-        print("Installing rbw via cargo (compiles; may take a few minutes)...", file=sys.stderr)
-        if subprocess.run(["cargo", "install", "rbw"]).returncode == 0 and shutil.which("rbw"):
-            return True
-    return False
+    """Install bitwarden-use with its checksummed installer (a GitHub Release
+    binary, no package manager or compiler). Inherits stdio so the agent/user
+    sees progress. Returns True if it is usable afterwards."""
+    if not shutil.which("curl"):
+        return False
+    print("Installing bitwarden-use...", file=sys.stderr)
+    if subprocess.run(["sh", "-c", BWU_INSTALL]).returncode != 0:
+        return False
+    return Path(rbw_binary() or "").name == "bitwarden-use"
 
 
 def rbw_list_entries() -> list[dict[str, str]]:
@@ -921,7 +934,7 @@ def command_login(args: argparse.Namespace) -> None:
         if not args.domain:
             raise SystemExit("Provide --domain <host> or --name <item>.")
         if not vault_unlocked():
-            raise VaultError("Vault is locked. Run: rbw unlock")
+            raise VaultError(f"Vault is locked. Run: {vault_cli()} unlock")
         entries = rbw_list_entries()
         matches = match_entries(entries, args.domain)
         if args.user:
@@ -986,12 +999,9 @@ def command_vault_setup(args: argparse.Namespace) -> None:
     perform. Designed to be driven by the skill, not typed by the user."""
     if not rbw_binary():
         if not args.install:
-            raise VaultError("rbw not found. Re-run with --install (uses brew/cargo), or: brew install rbw")
+            raise VaultError(f"bitwarden-use not found. Re-run with --install, or: {BWU_INSTALL}")
         if not _install_rbw():
-            raise VaultError(
-                "Could not install rbw automatically. Install it manually:\n"
-                "  brew install rbw            # or: cargo install rbw"
-            )
+            raise VaultError(f"Could not install bitwarden-use automatically. Install it manually:\n  {BWU_INSTALL}")
     configured: list[str] = []
     if args.base_url:
         proc = _run_rbw("config", "set", "base_url", args.base_url)
@@ -1017,16 +1027,17 @@ def command_vault_setup(args: argparse.Namespace) -> None:
     info["unlocked"] = unlocked
     # The master password is the one thing the agent never handles: surface the
     # exact command for the human to run, do not run it here.
-    info["next_step"] = None if unlocked else "rbw login   # you type the master password; the agent never sees it"
+    info["next_step"] = None if unlocked else f"{vault_cli()} login   # you type the master password; the agent never sees it"
     print(json.dumps(info, indent=2, ensure_ascii=False))
 
 
 def command_vault_status(args: argparse.Namespace) -> None:
-    """Report rbw availability, server, and lock state — never any secret."""
+    """Report vault CLI availability, server, and lock state — never any secret.
+    The keys keep their rbw_* names for existing callers (the macOS app)."""
     rbw = rbw_binary()
     info: dict[str, Any] = {"rbw_installed": bool(rbw), "rbw_path": rbw}
     if not rbw:
-        info["hint"] = "brew install rbw   (or: cargo install rbw)"
+        info["hint"] = BWU_INSTALL
         print(json.dumps(info, indent=2, ensure_ascii=False))
         return
     cfg = _run_rbw("config", "show")
@@ -1480,7 +1491,7 @@ def _backup_identity(args: argparse.Namespace) -> bytes:
         try:
             # Check first so a locked vault never leaves rbw blocked on a pinentry prompt.
             if not vault_unlocked():
-                raise SystemExit("Vault is locked. Ask the user to run `rbw unlock` themselves, then retry.")
+                raise SystemExit(f"Vault is locked. Ask the user to run `{vault_cli()} unlock` themselves, then retry.")
             proc = _run_rbw("get", args.identity_rbw)
         except VaultError as exc:
             raise SystemExit(str(exc)) from exc
@@ -1491,7 +1502,7 @@ def _backup_identity(args: argparse.Namespace) -> bytes:
         path = Path(args.identity or os.environ.get("PROFILE_USE_BACKUP_IDENTITY") or BACKUP_IDENTITY_DEFAULT).expanduser()
         if not path.exists():
             raise SystemExit(
-                f"No age identity at {path}. Pass --identity FILE, or --identity-rbw '<vault item>' after `rbw unlock`."
+                f"No age identity at {path}. Pass --identity FILE, or --identity-rbw '<vault item>' after `{vault_cli()} unlock`."
             )
         text = path.read_text(encoding="utf-8")
     keys = [line.strip() for line in text.splitlines() if line.strip().startswith("AGE-SECRET-KEY-")]

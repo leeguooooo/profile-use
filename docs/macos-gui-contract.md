@@ -230,7 +230,7 @@ The GUI is **native file I/O first**. Everything in §1–§4 (resolve path, rea
 
 ### Credentials rule (hard)
 - Login passwords/credentials **NEVER** live in the profile JSON, memory, logs, temp files, or chat — they are read **live from the vault each time** via `login` and re-read every time.
-- The GUI must **never** ask for, capture, store, or echo the rbw master password, and must **never** run `rbw login`/`unlock` itself — it surfaces the command for the human. Check `vault-status.unlocked` before attempting a domain lookup; if locked, show the fix command ("Run: `rbw unlock`").
+- The GUI must **never** ask for, capture, store, or echo the vault master password, and must **never** run `bitwarden-use login`/`unlock` itself — it surfaces the command for the human. Check `vault-status.unlocked` before attempting a domain lookup; if locked, show the fix command ("Run: `bitwarden-use unlock`").
 - `login` default output is redacted: password fixed-width `********` (never length-revealing), username email-aware masked, totp shown only as `present`, URIs shown raw. `--reveal` only at the instant of filling. Multiple matches → list masked candidates and fetch nothing until disambiguated by `--name`/`--user`.
 
 ---

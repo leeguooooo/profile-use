@@ -198,9 +198,9 @@ Rules for originals:
 
 ## Login Credentials (Bitwarden / Vaultwarden)
 
-The CLI uses `rbw` when installed and otherwise its fork `bitwarden-use` (same agent and database). With `bitwarden-use`, every read passes `--reveal`, which asks for Touch ID outside its reveal folders; that prompt is intended, never work around it. Under `bitwarden-use`, `login --domain` matches each entry's stored URIs (so `jp.mercari.com` finds an entry named `メルカリ`), orients without any Touch ID, and on `--reveal` prompts once for the entry it just matched; `--deep` is not needed there. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
+The CLI uses `bitwarden-use` (`bwu`), and plain `rbw` (its upstream: same agent and database) only when bitwarden-use is not installed. With `bitwarden-use`, every read passes `--reveal`, which asks for Touch ID outside its reveal folders unless the user turned that off (`require_touch_id false`); a prompt that appears is intended, never work around it. Under `bitwarden-use`, `login --domain` matches each entry's stored URIs (so `jp.mercari.com` finds an entry named `メルカリ`), orients without any Touch ID, and on `--reveal` prompts once for the entry it just matched; `--deep` is not needed there. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
 
-Account passwords do **not** live in the profile JSON. They stay in the user's password manager and are read live through `rbw` (a Bitwarden-compatible CLI that also talks to self-hosted Vaultwarden). The skill reads one credential at the moment of fill and never copies it into the profile, memory, logs, or chat.
+Account passwords do **not** live in the profile JSON. They stay in the user's password manager and are read live through `bitwarden-use` (a Bitwarden-compatible CLI that also talks to self-hosted Vaultwarden). The skill reads one credential at the moment of fill and never copies it into the profile, memory, logs, or chat.
 
 ### Setup is agent-driven — the user only types the master password
 
@@ -213,13 +213,13 @@ Do not hand the user a list of shell commands. When a credential is needed, the 
    python3 scripts/profile_use.py vault-setup --install --base-url <server-url> --email <account-email>
    ```
 
-   `--install` installs rbw via brew/cargo if missing. Get the server URL from the user (or a value they gave earlier, e.g. `https://bit.leeguoo.com`) and the email from `contact.email` if present; ask only for whatever is genuinely unknown.
-3. `vault-setup` reports `next_step`. If it says to run `rbw login`, ask the user to run **that one command themselves** (in the `!` prompt or their terminal) and type their master password. The agent never asks for, runs with, captures, or echoes the master password. Once `rbw-agent` holds the unlock, every later `login` call just works.
+   `--install` installs bitwarden-use with its checksummed installer (a GitHub Release binary into `~/.local/bin`) if missing. Get the server URL from the user (or a value they gave earlier, e.g. `https://bit.leeguoo.com`) and the email from `contact.email` if present; ask only for whatever is genuinely unknown.
+3. `vault-setup` reports `next_step`. If it says to run `bitwarden-use login`, ask the user to run **that one command themselves** (in the `!` prompt or their terminal) and type their master password. The agent never asks for, runs with, captures, or echoes the master password. Once the agent holds the unlock, every later `login` call just works.
 
 After setup, use:
 
 ```bash
-python3 scripts/profile_use.py vault-status                       # rbw installed? server? unlocked? (no secrets)
+python3 scripts/profile_use.py vault-status                       # vault CLI installed? server? unlocked? (no secrets)
 python3 scripts/profile_use.py login --domain example.com         # redacted: user t***@x.com / password ********
 python3 scripts/profile_use.py login --domain example.com --reveal  # raw user + password — only at the moment of filling
 python3 scripts/profile_use.py login --name "GitHub" --user me@x.com  # target an item directly / pick one account
@@ -232,7 +232,7 @@ Rules for credentials:
 
 1. Treat every credential as high sensitivity, like `payment`/`bank`. Default to the redacted output; fetch `--reveal` only at the instant you fill the field, and never paste the raw password into a final response.
 2. Do not store, cache, or write credentials anywhere — not the profile JSON, not memory, not a temp file. Re-read from the vault each time.
-3. The vault unlock belongs to `rbw-agent`. Never ask for, capture, store, or echo the master password. If `vault-status` shows `unlocked: false`, ask the user to run `rbw unlock` themselves.
+3. The vault unlock belongs to the agent (`bitwarden-use-agent`). Never ask for, capture, store, or echo the master password. If `vault-status` shows `unlocked: false`, ask the user to run `bitwarden-use unlock` themselves.
 4. Verify the real domain before filling a password, exactly as for any autofill. Stop on suspicious or typosquatted hosts.
 5. Submitting a login/registration form still requires the user's explicit submit approval.
 

@@ -24,8 +24,8 @@ struct LoginResult: Codable, Equatable {
 }
 
 /// Reads login credentials live from the vault via the bundled `profile_use.py`.
-/// The GUI NEVER stores credentials, never asks for the rbw master password,
-/// and never runs `rbw login`/`unlock` itself — it surfaces the command.
+/// The GUI NEVER stores credentials, never asks for the vault master password,
+/// and never runs `bitwarden-use login`/`unlock` itself — it surfaces the command.
 actor CredentialBridge {
     static let shared = CredentialBridge()
 
@@ -35,8 +35,8 @@ actor CredentialBridge {
             switch self {
             case .noPython: return "python3 not found. Install the Xcode Command Line Tools or Homebrew python."
             case .noScript: return "Bundled profile_use.py is missing."
-            case .vaultLocked: return "Vault is locked. Run: rbw unlock"
-            case .notInstalled: return "rbw (Bitwarden CLI) is not installed. Run: profile-use vault-setup --install"
+            case .vaultLocked: return "Vault is locked. Run: bitwarden-use unlock"
+            case .notInstalled: return "bitwarden-use (Bitwarden CLI) is not installed. Run: profile-use vault-setup --install"
             case let .lookup(msg): return msg
             }
         }

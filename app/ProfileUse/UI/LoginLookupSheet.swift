@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Reads a login credential live from the rbw / Bitwarden vault. Nothing is
 /// stored; the master password is never requested here — if the vault is locked
-/// we surface the `rbw unlock` command for the user to run themselves.
+/// we surface the `bitwarden-use unlock` command for the user to run themselves.
 struct LoginLookupSheet: View {
     @ObservedObject var model: ProfileModel
     @Environment(\.dismiss) private var dismiss
@@ -22,9 +22,9 @@ struct LoginLookupSheet: View {
             if !checked {
                 ProgressView().frame(maxWidth: .infinity)
             } else if status?.rbwInstalled != true {
-                fix("rbw (Bitwarden CLI) is not installed.", command: "profile-use vault-setup --install")
+                fix("bitwarden-use (Bitwarden CLI) is not installed.", command: "profile-use vault-setup --install")
             } else if status?.unlocked != true {
-                fix("Vault is locked.", command: "rbw unlock")
+                fix("Vault is locked.", command: "bitwarden-use unlock")
             } else {
                 lookupForm
             }
