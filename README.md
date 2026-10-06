@@ -161,6 +161,17 @@ python3 scripts/profile_use.py set --profile personal invoice.receipt_name "..."
 
 Use flexible nested paths for country-specific or site-specific fields. Do not save one-time codes, CAPTCHA text, temporary links, passwords, or session tokens.
 
+## Logging in
+
+When an agent hits a login page it signs in on its own: the password comes from your Bitwarden / Vaultwarden vault through [bitwarden-use](https://github.com/leeguooooo/bitwarden-use), and the second factor from wherever the site sent it. TOTP comes from the vault entry, SMS codes through [message-use](https://github.com/leeguooooo/message-use), email codes and magic links through [mail-use](https://github.com/leeguooooo/mail-use). You only type the vault's master password once, at first setup; after that a locked vault is unlocked automatically (macOS keychain first, else bitwarden-use's password dialog).
+
+```bash
+python3 scripts/profile_use.py vault-status                    # vault + code sources, no secrets
+python3 scripts/profile_use.py code --wait 120s --from GitHub  # newest SMS/email code that arrives from now on
+```
+
+Codes are single-use and never stored.
+
 ## Sync recommendation
 
 Use iCloud Drive for the everyday local profile. Use a password manager for cards, bank accounts, passwords, recovery codes, and government IDs. Use GitHub only for this skill, schemas, placeholder examples, or encrypted backups.

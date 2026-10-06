@@ -161,6 +161,17 @@ python3 scripts/profile_use.py set --profile personal invoice.receipt_name "..."
 
 国家特有或站点特有的字段用灵活的嵌套路径。不要保存一次性验证码、CAPTCHA 文本、临时链接、密码或会话令牌。
 
+## 登录
+
+agent 遇到登录页会自己登录。密码从 Bitwarden / Vaultwarden 密码库里取（[bitwarden-use](https://github.com/leeguooooo/bitwarden-use)），二次验证看网站发到哪：TOTP 从密码库条目里取，短信验证码用 [message-use](https://github.com/leeguooooo/message-use) 读，邮件验证码和登录链接用 [mail-use](https://github.com/leeguooooo/mail-use) 读。主密码只在第一次设置时输一次，之后密码库锁了会自动解锁（先用 macOS 钥匙串，不行再弹 bitwarden-use 的密码框）。
+
+```bash
+python3 scripts/profile_use.py vault-status                    # 密码库和验证码来源状态，不含任何密钥
+python3 scripts/profile_use.py code --wait 120s --from GitHub  # 等从现在起收到的最新短信/邮件验证码
+```
+
+验证码只用一次，不会存下来。
+
 ## 同步建议
 
 日常档案用 iCloud Drive。银行卡、账户、密码、恢复码、政府证件交给密码管理器。GitHub 只放 skill 代码、schema、占位示例或加密备份。

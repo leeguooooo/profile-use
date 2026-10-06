@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -424,6 +425,35 @@ def _vault_failure_hint(proc: subprocess.CompletedProcess) -> str:
 def vault_unlocked() -> bool:
     """True when the agent holds an unlocked vault. Does not trigger a prompt."""
     return _run_rbw("unlocked").returncode == 0
+
+
+def ensure_vault_unlocked() -> None:
+    """Unlock the vault ourselves instead of asking the user to. bitwarden-use
+    first tries the master password it keeps in the macOS login keychain (no
+    prompt; enrolled once with `bitwarden-use unlock --keychain-store`). Failing
+    that, plain `unlock` opens the pinentry dialog, where the user types the
+    password straight into the vault agent; this process never sees it."""
+    if vault_unlocked():
+        return
+    if _is_bitwarden_use():
+        try:
+            if _run_rbw_quiet("unlock", "--keychain", timeout=30).returncode == 0 and vault_unlocked():
+                return
+        except subprocess.TimeoutExpired:
+            pass
+    print(f"Vault is locked; running `{vault_cli()} unlock` (enter the master password in the dialog)...", file=sys.stderr)
+    try:
+        # stdin stays closed: the password goes into pinentry, never through here.
+        subprocess.run([rbw_binary() or vault_cli(), "unlock"], stdin=subprocess.DEVNULL, timeout=300)
+    except subprocess.TimeoutExpired:
+        pass
+    if not vault_unlocked():
+        raise VaultError(f"Vault is still locked after `{vault_cli()} unlock`.")
+
+
+def _run_rbw_quiet(*args: str, timeout: int) -> subprocess.CompletedProcess:
+    return subprocess.run([rbw_binary() or vault_cli(), *args], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=timeout)
 
 
 def _install_rbw() -> bool:
@@ -870,8 +900,7 @@ def _bitwarden_use_domain_login(args: argparse.Namespace) -> tuple[dict[str, Any
     """Match by stored URI inside bitwarden-use without revealing (no Touch ID), then
     reveal only the confirmed entry, pinned by id so a sync between the two calls
     cannot swap in a different one."""
-    if not vault_unlocked():
-        raise VaultError("Vault is locked. Ask the user to run `bitwarden-use unlock` themselves.")
+    ensure_vault_unlocked()
     domain = normalize_domain(args.domain)
     probe = _run_rbw("login", "--domain", args.domain, *(["--user", args.user] if args.user else []))
     # A match comes on stdout; "no match / several" comes on stderr as a JSON
@@ -923,6 +952,7 @@ def command_login(args: argparse.Namespace) -> None:
         # bitwarden-use matches stored URIs itself, so --deep is never needed here.
         cred, payload = _bitwarden_use_domain_login(args)
     elif args.name:
+        ensure_vault_unlocked()
         cred = get_credential(args.name, args.user)
         payload: dict[str, Any] = {
             "ok": True,
@@ -933,8 +963,7 @@ def command_login(args: argparse.Namespace) -> None:
     else:
         if not args.domain:
             raise SystemExit("Provide --domain <host> or --name <item>.")
-        if not vault_unlocked():
-            raise VaultError(f"Vault is locked. Run: {vault_cli()} unlock")
+        ensure_vault_unlocked()
         entries = rbw_list_entries()
         matches = match_entries(entries, args.domain)
         if args.user:
@@ -993,8 +1022,21 @@ def command_login(args: argparse.Namespace) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
+def vault_config_summary() -> dict[str, Any]:
+    """Server URL and masked email from ``config show``; never a secret."""
+    cfg = _run_rbw("config", "show")
+    if cfg.returncode != 0:
+        return {}
+    try:
+        parsed = json.loads(cfg.stdout)
+    except json.JSONDecodeError:
+        return {"config_parse_error": True}
+    email = parsed.get("email")
+    return {"base_url": parsed.get("base_url") or parsed.get("identity_url"), "email": mask_user(email) if email else None}
+
+
 def command_vault_setup(args: argparse.Namespace) -> None:
-    """Install (with --install) and configure rbw end to end, so the only step
+    """Install (with --install) and configure bitwarden-use end to end, so the only step
     left for the human is the master-password unlock — which the agent must never
     perform. Designed to be driven by the skill, not typed by the user."""
     if not rbw_binary():
@@ -1014,21 +1056,24 @@ def command_vault_setup(args: argparse.Namespace) -> None:
             raise VaultError(_vault_failure_hint(proc))
         configured.append("email")
     info: dict[str, Any] = {"ok": True, "rbw_installed": True, "configured": configured}
-    cfg = _run_rbw("config", "show")
-    if cfg.returncode == 0:
-        try:
-            parsed = json.loads(cfg.stdout)
-            info["base_url"] = parsed.get("base_url") or parsed.get("identity_url")
-            email = parsed.get("email")
-            info["email"] = mask_user(email) if email else None
-        except json.JSONDecodeError:
-            info["config_parse_error"] = True
+    info.update(vault_config_summary())
     unlocked = vault_unlocked()
     info["unlocked"] = unlocked
-    # The master password is the one thing the agent never handles: surface the
-    # exact command for the human to run, do not run it here.
-    info["next_step"] = None if unlocked else f"{vault_cli()} login   # you type the master password; the agent never sees it"
+    # First-time login needs the master password typed by the human; afterwards
+    # `unlock --keychain-store` lets every later unlock happen without a prompt.
+    info["next_step"] = None if unlocked else (
+        f"{vault_cli()} login && {vault_cli()} unlock --keychain-store   # you type the master password; the agent never sees it"
+        if _is_bitwarden_use() else f"{vault_cli()} login   # you type the master password; the agent never sees it"
+    )
     print(json.dumps(info, indent=2, ensure_ascii=False))
+
+
+def command_vault_unlock(args: argparse.Namespace) -> None:
+    """Unlock the vault (keychain first, pinentry dialog otherwise). No secret output."""
+    if not rbw_binary():
+        raise VaultError(f"bitwarden-use not found. Run: vault-setup --install, or {BWU_INSTALL}")
+    ensure_vault_unlocked()
+    print(json.dumps({"ok": True, "unlocked": True}, indent=2))
 
 
 def command_vault_status(args: argparse.Namespace) -> None:
@@ -1040,17 +1085,170 @@ def command_vault_status(args: argparse.Namespace) -> None:
         info["hint"] = BWU_INSTALL
         print(json.dumps(info, indent=2, ensure_ascii=False))
         return
-    cfg = _run_rbw("config", "show")
-    if cfg.returncode == 0:
-        try:
-            parsed = json.loads(cfg.stdout)
-            info["base_url"] = parsed.get("base_url") or parsed.get("identity_url")
-            email = parsed.get("email")
-            info["email"] = mask_user(email) if email else None
-        except json.JSONDecodeError:
-            info["config_parse_error"] = True
+    info.update(vault_config_summary())
     info["unlocked"] = vault_unlocked()
+    # The other half of a login: where a second-factor code can be read from.
+    info["code_sources"] = {name: bool(code_source_binary(name)) for name in CODE_SOURCES}
     print(json.dumps(info, indent=2, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# Second-factor codes: SMS through message-use, email through mail-use
+# ---------------------------------------------------------------------------
+#
+# A login rarely ends at the password. TOTP comes from the vault entry itself
+# (`login --reveal` returns it); SMS and email codes come from these two CLIs.
+# `code` asks both and returns the newest one, so the agent can finish a login
+# without asking the user to read their phone. A code is single-use and short
+# lived: it is printed raw (it has to be typed) and never stored.
+
+CODE_SOURCES = {"sms": "message-use", "mail": "mail-use"}
+CODE_POLL_SECONDS = 5
+# A code sent just before `code --wait` starts still counts as new.
+CODE_WAIT_GRACE_SECONDS = 30
+_DURATION_RE = re.compile(r"^(\d+)\s*([smhd]?)$")
+
+
+def parse_duration(text: str) -> int:
+    """``90`` / ``90s`` / ``10m`` / ``2h`` / ``1d`` -> seconds."""
+    match = _DURATION_RE.match(text.strip().lower())
+    if not match:
+        raise SystemExit(f"Bad duration {text!r}; use e.g. 90s, 10m, 2h.")
+    return int(match.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+
+
+def code_source_binary(source: str) -> str | None:
+    name = CODE_SOURCES[source]
+    local = Path.home() / ".local" / "bin" / name
+    return shutil.which(name) or (str(local) if local.is_file() and os.access(local, os.X_OK) else None)
+
+
+def _age_seconds(stamp: str, now: datetime.datetime) -> int | None:
+    """Age of an ISO (``...Z``) or naive local (``2026-10-05 18:04:20``) timestamp."""
+    try:
+        when = datetime.datetime.fromisoformat(stamp.strip().replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if when.tzinfo is None:
+        when = when.astimezone()  # naive = local time, as mail-use prints it
+    return max(0, int((now - when).total_seconds()))
+
+
+def parse_sms_code(text: str, now: datetime.datetime) -> dict[str, Any] | None:
+    """``message-use code --json``: one object, or ``null`` when none."""
+    item = json.loads(text or "null")
+    if not item or not item.get("code"):
+        return None
+    age = item.get("age_seconds")
+    return {
+        "code": item["code"],
+        "source": "sms",
+        "from": item.get("brand") or item.get("sender") or item.get("handle") or "",
+        "age_seconds": age if isinstance(age, int) else _age_seconds(item.get("date", ""), now),
+    }
+
+
+def parse_mail_code(text: str, now: datetime.datetime, sender: str | None) -> dict[str, Any] | None:
+    """``mail-use code --all`` JSON. mail-use has no sender filter, so --from is
+    applied here against the sender and subject."""
+    payload = json.loads(text or "{}")
+    if not payload.get("success", True):
+        raise RuntimeError(str(payload.get("error") or payload)[:200])
+    hits = []
+    for item in payload.get("candidates") or ([payload["newest"]] if payload.get("newest") else []):
+        # "low" is mail-use's guess at a number in a newsletter or receipt, not an OTP.
+        if not item.get("code") or (item.get("confidence") == "low" and not sender):
+            continue
+        if sender and sender.casefold() not in f"{item.get('from', '')} {item.get('subject', '')}".casefold():
+            continue
+        hits.append({
+            "code": item["code"],
+            "source": "mail",
+            "from": item.get("from", ""),
+            "subject": item.get("subject", ""),
+            "confidence": item.get("confidence", ""),
+            "age_seconds": _age_seconds(item.get("date", ""), now),
+        })
+    return min(hits, key=lambda hit: hit["age_seconds"] if hit["age_seconds"] is not None else 10**9, default=None)
+
+
+def fetch_code(source: str, since: str, sender: str | None) -> dict[str, Any] | None:
+    """Newest code from one source. Raises RuntimeError when the CLI cannot read."""
+    binary = code_source_binary(source)
+    if not binary:
+        raise RuntimeError(f"{CODE_SOURCES[source]} not installed")
+    if source == "sms":
+        cmd = [binary, "code", "--since", since, "--json", *(["--from", sender] if sender else [])]
+    else:
+        cmd = [binary, "code", "--since", since, "--all"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{CODE_SOURCES[source]} timed out") from exc
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # message-use exits 4 for "no code in that window"; anything else non-zero is a real failure.
+    if source == "sms" and proc.returncode == 4:
+        return None
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        try:  # mail-use reports failures as {"success": false, "error": ...} on stdout
+            detail = json.loads(detail).get("error") or detail
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        raise RuntimeError(str(detail)[:200] or f"exit {proc.returncode}")
+    try:
+        return parse_sms_code(proc.stdout, now) if source == "sms" else parse_mail_code(proc.stdout, now, sender)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"unreadable output from {CODE_SOURCES[source]}") from exc
+
+
+def command_code(args: argparse.Namespace) -> None:
+    """Newest SMS/email verification code. With --wait, polls until a code newer
+    than the moment the command started arrives (trigger "send code" first)."""
+    sources = list(CODE_SOURCES) if args.via == "auto" else [args.via]
+    window = parse_duration(args.since)
+    wait = parse_duration(args.wait) if args.wait else 0
+    started = datetime.datetime.now()
+    deadline = started + datetime.timedelta(seconds=wait)
+    missing = {source for source in sources if not code_source_binary(source)}
+    errors = {source: f"{CODE_SOURCES[source]} not installed" for source in missing}
+    while True:
+        elapsed = int((datetime.datetime.now() - started).total_seconds())
+        # When waiting, only a code that arrived after we started (plus a little
+        # grace for one sent just before) counts; an older one is the last login's.
+        max_age = elapsed + CODE_WAIT_GRACE_SECONDS if wait else window
+        found = []
+        failed = set(missing)
+        for source in sources:
+            if source in missing:
+                continue
+            try:
+                # Both CLIs take minutes; mail-use rejects seconds.
+                hit = fetch_code(source, f"{max(1, -(-max_age // 60))}m", args.sender)
+            except RuntimeError as exc:
+                # Transient (an IMAP hiccup): keep polling, report the last error.
+                errors[source] = str(exc)
+                failed.add(source)
+                continue
+            errors.pop(source, None)
+            if hit and (hit["age_seconds"] is None or hit["age_seconds"] <= max_age):
+                found.append(hit)
+        if found:
+            best = min(found, key=lambda hit: hit["age_seconds"] if hit["age_seconds"] is not None else 10**9)
+            print(json.dumps({"ok": True, **best, "checked": sources, "errors": errors or None}, indent=2, ensure_ascii=False))
+            return
+        if len(missing) == len(sources) or datetime.datetime.now() >= deadline:
+            break
+        time.sleep(CODE_POLL_SECONDS)
+    print(json.dumps({
+        "ok": False,
+        "reason": "no source could be read" if len(failed) == len(sources) else "no code found",
+        "checked": sources,
+        "errors": errors or None,
+        "hint": "trigger the site's 'send code' first, then rerun with --wait 120"
+        if not wait else "widen --wait, check --from, or ask the user where the code went",
+    }, indent=2, ensure_ascii=False))
+    raise SystemExit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1157,34 +1355,49 @@ def build_parser() -> argparse.ArgumentParser:
 
     login = subparsers.add_parser(
         "login",
-        help="Read one site credential live from the Bitwarden/Vaultwarden vault via rbw (never stored).",
+        help="Read one site credential live from the Bitwarden/Vaultwarden vault via bitwarden-use (never stored).",
     )
-    login.add_argument("--domain", help="Site host or URL, e.g. example.com — matched against item names.")
+    login.add_argument("--domain", help="Site host or URL, e.g. example.com — matched against stored URIs (bitwarden-use) or item names (rbw).")
     login.add_argument("--name", help="Target a vault item by exact name instead of matching by domain.")
     login.add_argument("--user", help="Disambiguate when one item/domain has several accounts.")
     login.add_argument("--reveal", action="store_true", help="Return the raw username/password to fill a form.")
     login.add_argument(
         "--deep",
         action="store_true",
-        help="If no item name matches, scan every item's stored URIs (slower).",
+        help="rbw only: if no item name matches, scan every item's stored URIs (slower).",
     )
     login.set_defaults(func=command_login)
 
     vault_status = subparsers.add_parser(
-        "vault-status", help="Report rbw availability, server URL, and lock state (no secrets)."
+        "vault-status", help="Report vault CLI availability, server URL, lock state and code sources (no secrets)."
     )
     vault_status.set_defaults(func=command_vault_status)
 
+    vault_unlock = subparsers.add_parser(
+        "vault-unlock", help="Unlock the vault: macOS keychain first, else the pinentry dialog. Never prints a secret."
+    )
+    vault_unlock.set_defaults(func=command_vault_unlock)
+
     vault_setup = subparsers.add_parser(
         "vault-setup",
-        help="Install (with --install) and configure rbw for a Bitwarden/Vaultwarden server.",
+        help="Install (with --install) and configure bitwarden-use for a Bitwarden/Vaultwarden server.",
     )
     vault_setup.add_argument("--base-url", dest="base_url", help="Server URL, e.g. https://bit.leeguoo.com.")
     vault_setup.add_argument("--email", help="Vault account email.")
     vault_setup.add_argument(
-        "--install", action="store_true", help="Install rbw via brew/cargo if it is missing."
+        "--install", action="store_true", help="Install bitwarden-use with its checksummed installer if missing."
     )
     vault_setup.set_defaults(func=command_vault_setup)
+
+    code = subparsers.add_parser(
+        "code",
+        help="Newest SMS (message-use) / email (mail-use) verification code, for finishing a login. Never stored.",
+    )
+    code.add_argument("--via", choices=["auto", "sms", "mail"], default="auto", help="Where to look (default: both).")
+    code.add_argument("--since", default="10m", help="How far back to look without --wait (default 10m).")
+    code.add_argument("--wait", help="Poll up to this long (e.g. 120s) for a code that arrives after the command starts.")
+    code.add_argument("--from", dest="sender", help="Sender, brand or subject fragment, e.g. 'GitHub' or 'Amazon'.")
+    code.set_defaults(func=command_code)
 
     leak_scan = subparsers.add_parser(
         "leak-scan",
@@ -1490,8 +1703,7 @@ def _backup_identity(args: argparse.Namespace) -> bytes:
     if args.identity_rbw:
         try:
             # Check first so a locked vault never leaves rbw blocked on a pinentry prompt.
-            if not vault_unlocked():
-                raise SystemExit(f"Vault is locked. Ask the user to run `{vault_cli()} unlock` themselves, then retry.")
+            ensure_vault_unlocked()
             proc = _run_rbw("get", args.identity_rbw)
         except VaultError as exc:
             raise SystemExit(str(exc)) from exc

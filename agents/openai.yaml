@@ -1,6 +1,6 @@
 interface:
-  display_name: "Personal Autofill"
-  short_description: "Fill forms from a private local profile."
+  display_name: "Profile Use"
+  short_description: "Fill forms from a private profile and log in from the vault."
   default_prompt: "Use $profile-use to help me fill this registration form from my private profile, confirming sensitive fields before submit."
 
 policy:

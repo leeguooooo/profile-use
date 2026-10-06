@@ -1,6 +1,6 @@
 ---
 name: profile-use
-description: Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git. Also use leak-scan before committing to any repo that might echo personal data. Not for infra/NAS/VPN notes or "how did we do X" history — that is memory-use.
+description: Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Also use whenever a task hits a login wall: sign in proactively with the Bitwarden vault (bitwarden-use) and finish 2FA with SMS codes (message-use) or email codes and magic links (mail-use) instead of asking the user to log in. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git. Also use leak-scan before committing to any repo that might echo personal data. Not for infra/NAS/VPN notes or "how did we do X" history — that is memory-use.
 ---
 
 # Profile Use
@@ -13,7 +13,7 @@ Use a private profile as the source of truth for repetitive registration and che
 2. Do not store real personal data in the skill repo, memory, issue trackers, PRs, screenshots, or final responses.
 3. Use redacted summaries by default. Reveal full values only when the user explicitly asks and the current task requires it.
 4. Treat payment cards, bank accounts, government IDs, tax IDs, passwords, security answers, and medical fields as high sensitivity. Ask for explicit confirmation before entering or revealing them.
-5. Do not submit a registration, KYC, checkout, banking, or payment form until the user explicitly approves the final submit action.
+5. Do not submit a registration, KYC, checkout, banking, or payment form until the user explicitly approves the final submit action. Signing in to the user's own existing account is the exception: see *Logging In*.
 6. If browser automation is used, verify the real domain and purpose before filling. Stop on suspicious, unrelated, or typosquatted domains.
 
 ## Profile Source
@@ -196,45 +196,72 @@ Rules for originals:
 4. Do not attach one-time documents (CAPTCHAs, QR codes, temporary passes). Attach stable identity/payment documents only.
 5. Expired or surrendered documents: `detach` them, or replace with `attach --force` when a renewed card arrives.
 
-## Login Credentials (Bitwarden / Vaultwarden)
+## Logging In (proactive)
 
-The CLI uses `bitwarden-use` (`bwu`), and plain `rbw` (its upstream: same agent and database) only when bitwarden-use is not installed. With `bitwarden-use`, every read passes `--reveal`, which asks for Touch ID outside its reveal folders unless the user turned that off (`require_touch_id false`); a prompt that appears is intended, never work around it. Under `bitwarden-use`, `login --domain` matches each entry's stored URIs (so `jp.mercari.com` finds an entry named `メルカリ`), orients without any Touch ID, and on `--reveal` prompts once for the entry it just matched; `--deep` is not needed there. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
+When a task runs into a login wall (a sign-in page, an expired session, a 401, "please log in to continue"), **log in yourself and carry on**. Do not stop to ask the user to log in, and do not hand them the steps. The user stored the password in their vault, their SMS reaches this Mac, and their email is readable, all so that the agent can do this.
 
-Account passwords do **not** live in the profile JSON. They stay in the user's password manager and are read live through `bitwarden-use` (a Bitwarden-compatible CLI that also talks to self-hosted Vaultwarden). The skill reads one credential at the moment of fill and never copies it into the profile, memory, logs, or chat.
+Account passwords do **not** live in the profile JSON. They stay in the user's vault and are read live through `bitwarden-use` (`bwu`). Second-factor codes come from `message-use` (SMS) and `mail-use` (email). Nothing from a login is ever written to the profile, memory, logs, a temp file, or chat.
 
-### Setup is agent-driven — the user only types the master password
+### The playbook
 
-Do not hand the user a list of shell commands. When a credential is needed, the agent runs setup itself and stops only at the one step it must never perform (the master-password unlock).
+1. **Check the domain.** The host must be the real site for the task. Stop on lookalike, typosquatted, or unrelated hosts; this is the only check that protects the password.
+2. **Make sure the vault is ready.** `python3 scripts/profile_use.py vault-status`. If the CLI is missing, set it up yourself (see *Vault setup* below). A locked vault is not a reason to stop: `login` unlocks it by itself, and `vault-unlock` does it on its own. Both try the master password in the macOS keychain first, with no prompt. If that is not enrolled, they open bitwarden-use's password dialog, where the user types straight into the vault agent. Do not ask before unlocking; just run it.
+3. **Sign in.**
+   - In a browser: `chrome-use auth login --bwu` on the login page. The values go straight from the vault to the page and never pass through the conversation. Use `--item <name>` when the site has several accounts, and `--passkey` when the entry holds a passkey (preferred: no second factor). For multi-step forms, see the `_autotype` field in the bitwarden-use docs.
+   - Anywhere else (CLI prompts, API tokens, native apps): `python3 scripts/profile_use.py login --domain <host> --reveal` reads username and password at the moment of filling.
+   - Several candidates: pick by `--user` if the task makes the account obvious (e.g. the work email for a work tool); otherwise ask which account, showing the masked list.
+4. **Second factor.** Work out the channel from the page text, then:
 
-1. Run `vault-status`. If `rbw_installed` is false or `unlocked` is false, set it up — don't ask the user to.
-2. Install + configure in one command (the agent runs this):
+   | The site says | Do |
+   |---|---|
+   | Authenticator app / TOTP | `login --domain <host> --reveal` → `totp` is the current code |
+   | "We texted a code to ••••78" | click "send", then `profile_use.py code --via sms --wait 120s --from <brand>` |
+   | "We emailed a code" | click "send", then `profile_use.py code --via mail --wait 120s --from <brand>` |
+   | Not clear which | `profile_use.py code --wait 120s --from <brand>` (asks both) |
+   | "Click the link we emailed" | `mail-use email search` for the newest mail from the site, read it with `mail-use email show`, check the link's host is the site's own domain, then open it with chrome-use |
+   | Push approval on a phone app, hardware key, a CAPTCHA you cannot solve | ask the user to approve it, then continue |
 
-   ```bash
-   python3 scripts/profile_use.py vault-setup --install --base-url <server-url> --email <account-email>
-   ```
+   `code --wait` only accepts a code that arrived after it started (with 30 s of grace for one sent just before), so it never returns the code from the last login. `--from` narrows to one sender (brand name, address, or subject fragment); use it whenever another service might be texting at the same time.
+5. **Submit and confirm.** Signing in to the user's existing account, with their vault credential, on the verified domain, is pre-approved: submit it without asking. Then check the page really is logged in before reporting success.
 
-   `--install` installs bitwarden-use with its checksummed installer (a GitHub Release binary into `~/.local/bin`) if missing. Get the server URL from the user (or a value they gave earlier, e.g. `https://bit.leeguoo.com`) and the email from `contact.email` if present; ask only for whatever is genuinely unknown.
-3. `vault-setup` reports `next_step`. If it says to run `bitwarden-use login`, ask the user to run **that one command themselves** (in the `!` prompt or their terminal) and type their master password. The agent never asks for, runs with, captures, or echoes the master password. Once the agent holds the unlock, every later `login` call just works.
+### Where to stop
 
-After setup, use:
+- First-time vault login (`bitwarden-use login`): the user types the master password once. After that, unlocks run without asking (see step 2).
+- Wrong password, or the site warns about lockout: do not retry more than once. Report back.
+- No vault entry for the site: ask the user. Never guess a password, and never start "forgot password" without their OK. A reset changes the stored credential.
+- Do not ask for a code more than twice. Resend loops trigger rate limits and account locks.
+- Creating an account, adding a payment method, or changing security settings is not logging in. The usual submit-approval rule applies.
+
+### Credential rules
+
+1. Treat every credential and code as high sensitivity. Default to the redacted `login` output; use `--reveal` only at the instant of filling, and never put a password or code in a final response.
+2. Do not store, cache, or write a credential or code anywhere. Re-read from the vault each time; codes are single-use.
+3. Never ask for, capture, store, or echo the master password. Unlocking is fine (keychain or the pinentry dialog); seeing or typing the password is not.
+4. A Touch ID prompt from `bitwarden-use` is intended; never work around it.
+
+### Vault setup (agent-driven)
+
+The CLI uses `bitwarden-use`, and plain `rbw` (its upstream: same agent and database) only when bitwarden-use is not installed. Under `bitwarden-use`, `login --domain` matches each entry's stored URIs (so `jp.mercari.com` finds an entry named `メルカリ`), orients without Touch ID, and on `--reveal` prompts once for the entry it matched. The backup key lives there too, as `profile-use age key` in the `profile-use` folder.
+
+When `vault-status` shows the CLI missing, install and configure it in one command yourself:
 
 ```bash
-python3 scripts/profile_use.py vault-status                       # vault CLI installed? server? unlocked? (no secrets)
-python3 scripts/profile_use.py login --domain example.com         # redacted: user t***@x.com / password ********
-python3 scripts/profile_use.py login --domain example.com --reveal  # raw user + password — only at the moment of filling
-python3 scripts/profile_use.py login --name "GitHub" --user me@x.com  # target an item directly / pick one account
-python3 scripts/profile_use.py login --domain example.com --deep   # no name match? scan stored URIs (slower)
+python3 scripts/profile_use.py vault-setup --install --base-url <server-url> --email <account-email>
 ```
 
-Matching is by **domain**: the form's host (e.g. `example.com`) is matched against vault item names, including the bare second-level label (`example`). When several items match, the command lists masked candidates and asks you to disambiguate with `--name`/`--user` — it does **not** fetch any password until exactly one item is chosen.
+Get the server URL from the user (or one they gave earlier, e.g. `https://bit.leeguoo.com`) and the email from `contact.email`; ask only for what is genuinely unknown. If `next_step` says to run `bitwarden-use login`, the user runs that one command (`! bitwarden-use login && bitwarden-use unlock --keychain-store`) and types the master password. `--keychain-store` saves it in the macOS login keychain, so every later unlock happens without a prompt.
 
-Rules for credentials:
+`vault-status` also reports `code_sources`: whether `message-use` and `mail-use` are installed. If one is missing, the matching codes have to come from the user. Offer to install it: `curl -fsSL https://raw.githubusercontent.com/leeguooooo/<name>/main/install.sh | sh`. message-use also needs Full Disk Access for the terminal; mail-use needs an account configured (`mail-use account`).
 
-1. Treat every credential as high sensitivity, like `payment`/`bank`. Default to the redacted output; fetch `--reveal` only at the instant you fill the field, and never paste the raw password into a final response.
-2. Do not store, cache, or write credentials anywhere — not the profile JSON, not memory, not a temp file. Re-read from the vault each time.
-3. The vault unlock belongs to the agent (`bitwarden-use-agent`). Never ask for, capture, store, or echo the master password. If `vault-status` shows `unlocked: false`, ask the user to run `bitwarden-use unlock` themselves.
-4. Verify the real domain before filling a password, exactly as for any autofill. Stop on suspicious or typosquatted hosts.
-5. Submitting a login/registration form still requires the user's explicit submit approval.
+```bash
+python3 scripts/profile_use.py vault-status                          # CLI, server, unlocked, code sources (no secrets)
+python3 scripts/profile_use.py vault-unlock                          # unlock: keychain first, else the password dialog
+python3 scripts/profile_use.py login --domain example.com            # redacted: user t***@x.com / password ********
+python3 scripts/profile_use.py login --domain example.com --reveal   # raw user + password + totp — only at fill time
+python3 scripts/profile_use.py login --name "GitHub" --user me@x.com # one entry / one account
+python3 scripts/profile_use.py code --wait 120s --from GitHub        # newest SMS/email code that arrives from now on
+python3 scripts/profile_use.py code --via mail --since 30m           # newest email code from the last 30 minutes
+```
 
 ## profile-use vs memory-use
 

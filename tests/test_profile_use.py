@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Smoke + redaction tests. Run: python3 tests/test_profile_use.py"""
 
+import argparse
 import importlib.util
+import io
+import json
 import os
 import tempfile
 import unittest
@@ -624,10 +627,13 @@ class VaultTests(unittest.TestCase):
                 out = self.run_cli("login", "--domain", "example.com")
                 self.assertFalse(_json.loads(out)["ok"])
 
-    def test_login_errors_when_locked(self):
-        with mock.patch.object(pa, "_run_rbw", return_value=self._completed(1)):
+    def test_login_unlocks_itself_then_errors_when_still_locked(self):
+        with mock.patch.object(pa, "_run_rbw", return_value=self._completed(1)), \
+                mock.patch.object(pa.subprocess, "run", return_value=self._completed(1)) as run, \
+                mock.patch("sys.stderr", new_callable=io.StringIO):
             with self.assertRaises(SystemExit):
                 self.run_cli("login", "--domain", "example.com")
+        self.assertEqual(run.call_args.args[0][1:], ["unlock"])
 
     def test_missing_rbw_raises_with_install_hint(self):
         with mock.patch.object(pa.shutil, "which", return_value=None):
@@ -667,9 +673,6 @@ class VaultTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.run_cli("vault-setup", "--base-url", "https://x")
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ValueFormatTests(unittest.TestCase):
@@ -732,3 +735,95 @@ class ValueFormatTests(unittest.TestCase):
             self.run_cli(tmp, "unset", "contact.phone_country_code")
             out = json.loads(self.run_cli(tmp, "values", "contact.phone", "--phone-format", "domestic"))
             self.assertEqual(out["contact.phone"], "070-1234-5678")
+
+
+class CodeTests(unittest.TestCase):
+    """`code` reads second-factor codes from message-use (SMS) and mail-use."""
+
+    NOW = pa.datetime.datetime(2026, 1, 1, 12, 0, tzinfo=pa.datetime.timezone.utc)
+
+    def test_durations(self):
+        self.assertEqual(pa.parse_duration("90"), 90)
+        self.assertEqual(pa.parse_duration("10m"), 600)
+        self.assertEqual(pa.parse_duration("2h"), 7200)
+        with self.assertRaises(SystemExit):
+            pa.parse_duration("soon")
+
+    def test_sms_payload_and_empty(self):
+        hit = pa.parse_sms_code('{"code": "123456", "brand": "GitHub", "age_seconds": 12, "text": "secret body"}', self.NOW)
+        self.assertEqual(hit, {"code": "123456", "source": "sms", "from": "GitHub", "age_seconds": 12})
+        self.assertIsNone(pa.parse_sms_code("null", self.NOW))
+
+    def test_mail_picks_newest_and_drops_low_confidence(self):
+        payload = json.dumps({"success": True, "candidates": [
+            {"code": "111111", "confidence": "high", "from": "noreply@example.com", "subject": "Your code", "date": "2026-01-01T11:50:00Z"},
+            {"code": "222222", "confidence": "high", "from": "noreply@example.com", "subject": "Your code", "date": "2026-01-01T11:59:00Z"},
+            {"code": "3210981", "confidence": "low", "from": "news@shop.example", "subject": "Sale", "date": "2026-01-01T11:59:30Z"},
+        ]})
+        hit = pa.parse_mail_code(payload, self.NOW, None)
+        self.assertEqual((hit["code"], hit["age_seconds"]), ("222222", 60))
+
+    def test_mail_sender_filter_matches_from_or_subject(self):
+        payload = json.dumps({"success": True, "candidates": [
+            {"code": "111111", "confidence": "high", "from": "a@github.com", "subject": "x", "date": "2026-01-01T11:59:00Z"},
+            {"code": "222222", "confidence": "high", "from": "b@other.com", "subject": "Amazon sign-in", "date": "2026-01-01T11:58:00Z"},
+        ]})
+        self.assertEqual(pa.parse_mail_code(payload, self.NOW, "amazon")["code"], "222222")
+        self.assertIsNone(pa.parse_mail_code(payload, self.NOW, "paypal"))
+
+    def test_wait_ignores_a_stale_code_from_the_last_login(self):
+        stale = {"code": "999999", "source": "sms", "from": "GitHub", "age_seconds": 3600}
+        with mock.patch.object(pa, "code_source_binary", return_value="/bin/true"), \
+                mock.patch.object(pa, "fetch_code", return_value=stale), \
+                mock.patch.object(pa.time, "sleep"), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            with self.assertRaises(SystemExit):
+                pa.command_code(argparse.Namespace(via="sms", since="10m", wait="1s", sender=None))
+        self.assertFalse(json.loads(out.getvalue())["ok"])
+
+    def test_one_failing_source_does_not_hide_the_other(self):
+        def fetch(source, since, sender):
+            if source == "mail":
+                raise RuntimeError("imap timeout")
+            return {"code": "123456", "source": "sms", "from": "", "age_seconds": 5}
+        with mock.patch.object(pa, "code_source_binary", return_value="/bin/true"), \
+                mock.patch.object(pa, "fetch_code", side_effect=fetch), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            pa.command_code(argparse.Namespace(via="auto", since="10m", wait=None, sender=None))
+        result = json.loads(out.getvalue())
+        self.assertEqual((result["code"], result["errors"]), ("123456", {"mail": "imap timeout"}))
+
+
+class AutoUnlockTests(unittest.TestCase):
+    """A locked vault is unlocked by the agent itself, keychain first."""
+
+    def _ok(self, code=0):
+        return pa.subprocess.CompletedProcess([], code, "", "")
+
+    def test_already_unlocked_runs_nothing(self):
+        with mock.patch.object(pa, "vault_unlocked", return_value=True), \
+                mock.patch.object(pa.subprocess, "run") as run:
+            pa.ensure_vault_unlocked()
+        run.assert_not_called()
+
+    def test_keychain_unlock_avoids_the_dialog(self):
+        with mock.patch.object(pa, "vault_unlocked", side_effect=[False, True]), \
+                mock.patch.object(pa, "rbw_binary", return_value="/x/bitwarden-use"), \
+                mock.patch.object(pa.subprocess, "run", return_value=self._ok()) as run:
+            pa.ensure_vault_unlocked()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][1:], ["unlock", "--keychain"])
+
+    def test_falls_back_to_pinentry_then_reports_still_locked(self):
+        with mock.patch.object(pa, "vault_unlocked", return_value=False), \
+                mock.patch.object(pa, "rbw_binary", return_value="/x/bitwarden-use"), \
+                mock.patch.object(pa.subprocess, "run", return_value=self._ok(1)) as run, \
+                mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(pa.VaultError):
+                pa.ensure_vault_unlocked()
+        self.assertEqual(run.call_args.args[0][1:], ["unlock"])
+        self.assertIs(run.call_args.kwargs["stdin"], pa.subprocess.DEVNULL)
+
+
+if __name__ == "__main__":
+    unittest.main()
