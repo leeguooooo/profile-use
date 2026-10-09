@@ -10,6 +10,7 @@
 		0C90E9CAE1AE6717F556DE0C /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA729847E912261090A1FA1 /* ProfileStore.swift */; };
 		27D9AA498C73BF42F77DF168 /* TouchID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6820AE72A6B9D6EC55C162 /* TouchID.swift */; };
 		30B18DF6EA973964668FDA7E /* Redaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2404BDA22348F98EFCF9C62 /* Redaction.swift */; };
+		354656F14B4B949E547F70B2 /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8184924E20C383A20AF4A30 /* AppUpdater.swift */; };
 		36FF430196B174A1A8ACCAA2 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C7AFB716E59F42F74FFF45 /* DocumentsView.swift */; };
 		3AA36ECD1B28C843503B728B /* QuickCopyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60C4178BD6D6166EE0210E3D /* QuickCopyView.swift */; };
 		3CC5C0B9E004C2E6147332BD /* profile_use.py in Resources */ = {isa = PBXBuildFile; fileRef = 235DC60ABF2EA6525956A6D9 /* profile_use.py */; };
@@ -39,6 +40,7 @@
 		C2404BDA22348F98EFCF9C62 /* Redaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Redaction.swift; sourceTree = "<group>"; };
 		C78CAA8C9C4527994BD3D830 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D6198DA581F40CBEA507670E /* ProfileUse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProfileUse.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8184924E20C383A20AF4A30 /* AppUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdater.swift; sourceTree = "<group>"; };
 		E4A564C975A58DFBB04B69B9 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		E91BD0B748ABBF358F2182F6 /* Documents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Documents.swift; sourceTree = "<group>"; };
 		E937F088DA701CBB79FF8118 /* ProfileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModel.swift; sourceTree = "<group>"; };
@@ -65,6 +67,7 @@
 		5DFF414BE42D3B24B60CD724 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				D8184924E20C383A20AF4A30 /* AppUpdater.swift */,
 				AFEC2820B320C2C3D6C9E520 /* CredentialBridge.swift */,
 				E91BD0B748ABBF358F2182F6 /* Documents.swift */,
 				AAA729847E912261090A1FA1 /* ProfileStore.swift */,
@@ -180,6 +183,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				354656F14B4B949E547F70B2 /* AppUpdater.swift in Sources */,
 				947596D41DE97C91E6DFE977 /* CredentialBridge.swift in Sources */,
 				658855EC6F55E816963A097E /* DesignSystem.swift in Sources */,
 				F4D213B5B73FAD35CBCA3EF6 /* Documents.swift in Sources */,
