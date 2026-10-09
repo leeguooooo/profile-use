@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = ProfileModel()
+    let updates = UpdateController()
     private var statusItem: NSStatusItem!
     private var popover = NSPopover()
     private var window: NSWindow?
@@ -20,10 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 340, height: 440)
         popover.contentViewController = NSHostingController(
-            rootView: QuickCopyView(model: model, onOpenEditor: { [weak self] in self?.openWindow() })
+            rootView: QuickCopyView(model: model, updates: updates, onOpenEditor: { [weak self] in self?.openWindow() })
         )
 
         openWindow()
+        // Launch, hourly and after wake; a real check at most once a day.
+        updates.startPeriodicChecks()
     }
 
     @objc private func togglePopover(_: Any?) {

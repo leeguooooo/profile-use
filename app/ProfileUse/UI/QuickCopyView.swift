@@ -4,6 +4,7 @@ import SwiftUI
 /// a form by hand. High-sensitivity copies prompt; nothing is auto-revealed.
 struct QuickCopyView: View {
     @ObservedObject var model: ProfileModel
+    @ObservedObject var updates: UpdateController
     var onOpenEditor: () -> Void
     @State private var query = ""
 
@@ -86,10 +87,35 @@ struct QuickCopyView: View {
         HStack(spacing: 10) {
             Button(action: onOpenEditor) { Label("Open editor", systemImage: "square.and.pencil") }
             Spacer()
+            updateControl
             Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain).font(.callout)
         .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    @ViewBuilder private var updateControl: some View {
+        switch updates.state {
+        case let .available(release):
+            Button { updates.install() } label: { Label("Update to \(release.version)", systemImage: "arrow.down.circle") }
+                .foregroundStyle(.tint)
+        case let .installing(version, progress):
+            Text(progress < 1 ? "Downloading \(version)… \(Int(progress * 100))%" : "Installing \(version)…")
+                .foregroundStyle(.secondary)
+        case .checking:
+            ProgressView().controlSize(.small)
+        case let .failed(message):
+            Button { Task { await updates.check(userInitiated: true) } } label: {
+                Image(systemName: "exclamationmark.triangle")
+            }
+            .foregroundStyle(.orange).help(message)
+        case .idle, .upToDate:
+            Button { Task { await updates.check(userInitiated: true) } } label: {
+                Text("v\(updates.currentVersion)").monospacedDigit()
+            }
+            .foregroundStyle(.secondary)
+            .help(updates.state == .upToDate ? "Up to date — click to check again" : "Check for updates")
+        }
     }
 }

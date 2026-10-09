@@ -25,6 +25,10 @@ git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "main is not in sync with origin/main"
 [ -z "$(git ls-remote --tags origin "refs/tags/v$V")" ] || die "v$V already exists"
 [ -z "$NOTES" ] || [ -f "$NOTES" ] || die "no such notes file: $NOTES"
+# Releases must be Developer ID signed + notarized: install-app.sh refuses anything
+# else, and the app's in-place updater only accepts this team's notarized builds.
+[ -n "$DRY" ] || { [ -n "${SIGN_ID:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; } \
+  || die "set SIGN_ID (Developer ID Application identity) and NOTARY_PROFILE (notarytool profile); see app/build-dmg.sh"
 
 # Marketing version + build number live in project.yml (xcodegen) and the generated Info.plist.
 trap 'git checkout -q -- $FILES' EXIT
@@ -49,7 +53,9 @@ git commit -qm "chore(release): v$V"
 git push -q origin main
 
 # gh creates the tag on the pushed commit together with the release, so the dmg is there as soon as the tag is.
-set -- "v$V" app/build/ProfileUse.dmg --target "$(git rev-parse HEAD)" --title "ProfileUse v$V"
+set -- "v$V" app/build/ProfileUse.dmg app/build/ProfileUse.dmg.sha256 \
+  app/build/ProfileUse-macos.tar.gz app/build/ProfileUse-macos.tar.gz.sha256 \
+  --target "$(git rev-parse HEAD)" --title "ProfileUse v$V"
 if [ -n "$NOTES" ]; then gh release create "$@" --notes-file "$NOTES"; else gh release create "$@" --generate-notes; fi
 git fetch -q --tags origin
 
