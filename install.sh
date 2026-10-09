@@ -1,8 +1,25 @@
 #!/bin/sh
-# Install the profile-use skill from this checkout and enable the leak-scan pre-commit hook.
-# Re-run any time; `git pull` then keeps the skill up to date (it is a symlink into this repo).
+# Install the profile-use skill and enable the leak-scan pre-commit hook.
+#   curl -fsSL https://raw.githubusercontent.com/leeguooooo/profile-use/main/install.sh | sh
+# Run from a checkout, it links that checkout. Otherwise (piped from curl, or a downloaded copy)
+# it keeps a checkout under ~/.agents/use-family like the rest of the family.
+# Re-run any time; `git pull` then keeps the skill up to date (it is a symlink into the checkout).
 set -e
-ROOT=$(cd "$(dirname "$0")" && pwd)
+command -v git >/dev/null 2>&1 || { echo "error: git is required" >&2; exit 1; }
+
+SELF_DIR=""
+case "$0" in */install.sh) SELF_DIR=$(cd "$(dirname "$0")" && pwd) ;; esac
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/SKILL.md" ] && [ -f "$SELF_DIR/scripts/profile_use.py" ]; then
+  ROOT=$SELF_DIR
+else
+  ROOT="${PROFILE_USE_HOME:-${USE_FAMILY_DIR:-$HOME/.agents/use-family}/profile-use}"
+  if [ -d "$ROOT/.git" ]; then
+    git -C "$ROOT" pull -q --ff-only || echo "warn: $ROOT not updated (local changes?)"
+  else
+    mkdir -p "$(dirname "$ROOT")"
+    git clone -q --depth 1 https://github.com/leeguooooo/profile-use.git "$ROOT"
+  fi
+fi
 
 link() {  # link <target> <link-path>; never replaces a real directory
   if [ -e "$2" ] && [ ! -L "$2" ]; then
