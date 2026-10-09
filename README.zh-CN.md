@@ -92,6 +92,12 @@ npx skills add leeguooooo/profile-use
 npx skills add https://github.com/leeguooooo/profile-use
 ```
 
+或者用安装脚本：它把仓库克隆到 `~/.agents/use-family/profile-use`，给 Claude Code / Codex 链接 skill，并开启 leak-scan pre-commit hook。重新运行即可更新：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/profile-use/main/install.sh | sh
+```
+
 ## 创建私有档案
 
 ```bash

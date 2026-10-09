@@ -92,6 +92,12 @@ Or from the GitHub URL:
 npx skills add https://github.com/leeguooooo/profile-use
 ```
 
+Or with the installer, which keeps a git checkout under `~/.agents/use-family/profile-use`, links the skill for Claude Code / Codex and turns on the leak-scan pre-commit hook. Re-run it to update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/profile-use/main/install.sh | sh
+```
+
 ## Create a private profile
 
 ```bash
