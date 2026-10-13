@@ -132,13 +132,29 @@ struct FieldRow: View {
     }
 
     var body: some View {
-        switch field.kind {
+        if model.isVaultReference(field.path) {
+            LabeledContent(title) { vaultControl }
+        } else { switch field.kind {
         case .bool:
             Toggle(title, isOn: Binding(get: { model.bool(field.path) },
                                         set: { model.setBool($0, at: field.path) }))
         default:
             LabeledContent(title) { valueControl }
-        }
+        } }
+    }
+
+    private var vaultControl: some View {
+        HStack(spacing: 6) {
+            Text(model.display(field.path, field.sensitivity)).textSelection(.enabled)
+            Image(systemName: "externaldrive.badge.person.crop").foregroundStyle(.secondary)
+                .help("Value is managed in Bitwarden. This profile keeps only a reference.")
+            if model.isRevealed(field.path) {
+                Button { model.hide(field.path) } label: { Image(systemName: "eye.slash") }
+            } else {
+                Button { Task { await model.reveal(field.path, field.sensitivity) } } label: { Image(systemName: "lock.shield") }
+            }
+            Button { Task { await model.copy(field.path, field.sensitivity) } } label: { Image(systemName: "doc.on.doc") }
+        }.buttonStyle(.borderless)
     }
 
     @ViewBuilder

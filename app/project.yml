@@ -18,6 +18,8 @@ targets:
       - path: ProfileUse/UI
       - path: ../scripts/profile_use.py
         buildPhase: resources
+      - path: ../scripts/profile_vault_sync.py
+        buildPhase: resources
     info:
       path: ProfileUse/App/Info.plist
       properties:

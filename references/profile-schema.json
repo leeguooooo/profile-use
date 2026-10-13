@@ -3,48 +3,68 @@
   "title": "Personal Autofill Profile",
   "type": "object",
   "additionalProperties": true,
+  "$defs": {
+    "vaultReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$vault"],
+      "properties": {
+        "$vault": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["item", "field"],
+          "properties": {
+            "provider": { "const": "bitwarden" },
+            "item": { "type": "string", "format": "uuid" },
+            "field": { "type": "string", "minLength": 1 },
+            "encoding": { "enum": ["string", "json"] }
+          }
+        }
+      }
+    }
+  },
   "properties": {
-    "profile_name": { "type": "string" },
+    "profile_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}] },
     "identity": {
       "type": "object",
       "properties": {
-        "full_name": { "type": "string", "sensitivity": "medium" },
-        "family_name": { "type": "string", "sensitivity": "medium" },
-        "given_name": { "type": "string", "sensitivity": "medium" },
-        "middle_name": { "type": "string", "sensitivity": "medium" },
-        "preferred_name": { "type": "string", "sensitivity": "low" },
-        "birthdate": { "type": "string", "sensitivity": "high", "format": "date" },
-        "gender": { "type": "string", "sensitivity": "high" }
+        "full_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "family_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "given_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "middle_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "preferred_name": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "low" },
+        "birthdate": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high", "format": "date" },
+        "gender": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high" }
       }
     },
     "contact": {
       "type": "object",
       "properties": {
-        "email": { "type": "string", "sensitivity": "medium" },
-        "phone_country_code": { "type": "string", "sensitivity": "medium" },
-        "phone": { "type": "string", "sensitivity": "medium" },
-        "alternate_email": { "type": "string", "sensitivity": "medium" }
+        "email": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "phone_country_code": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "phone": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "alternate_email": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" }
       }
     },
     "address": {
       "type": "object",
       "properties": {
-        "country": { "type": "string", "sensitivity": "medium" },
-        "region": { "type": "string", "sensitivity": "medium" },
-        "city": { "type": "string", "sensitivity": "medium" },
-        "ward_or_district": { "type": "string", "sensitivity": "medium" },
-        "line1": { "type": "string", "sensitivity": "high" },
-        "line2": { "type": "string", "sensitivity": "high" },
-        "postal_code": { "type": "string", "sensitivity": "medium" },
+        "country": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "region": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "city": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "ward_or_district": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+        "line1": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high" },
+        "line2": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high" },
+        "postal_code": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
         "jp": {
           "type": "object",
           "description": "Japan-specific address components for forms that split into 都道府県 / 市区町村 / 番地 / 建物名. Prefer these on JP forms; fall back to the generic address.* fields when a jp.* value is absent.",
           "properties": {
-            "prefecture": { "type": "string", "sensitivity": "medium" },
-            "city": { "type": "string", "sensitivity": "medium" },
-            "banchi": { "type": "string", "sensitivity": "high" },
-            "building": { "type": "string", "sensitivity": "high" },
-            "postal_code_hyphenated": { "type": "string", "sensitivity": "medium" }
+            "prefecture": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+            "city": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" },
+            "banchi": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high" },
+            "building": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "high" },
+            "postal_code_hyphenated": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" }
           }
         }
       }
@@ -54,6 +74,6 @@
     "government_id": { "type": "object", "sensitivity": "high" },
     "tax": { "type": "object", "sensitivity": "high" },
     "preferences": { "type": "object", "sensitivity": "low" },
-    "notes": { "type": "string", "sensitivity": "medium" }
+    "notes": { "anyOf": [{"type": "string"}, {"$ref": "#/$defs/vaultReference"}], "sensitivity": "medium" }
   }
 }

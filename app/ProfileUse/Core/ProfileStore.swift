@@ -55,17 +55,19 @@ enum ProfileStore {
 final class ProfileDocument {
     let profile: String
     private let root: NSMutableDictionary
+    private var loadedData: Data?
 
-    init(profile: String, root: NSMutableDictionary) {
+    init(profile: String, root: NSMutableDictionary, loadedData: Data? = nil) {
         self.profile = profile
         self.root = root
+        self.loadedData = loadedData
     }
 
     static func load(profile: String) -> ProfileDocument {
         let url = ProfileStore.fileURL(for: profile)
         if let data = try? Data(contentsOf: url),
            let obj = try? JSONSerialization.jsonObject(with: data, options: [.mutableContainers]) as? NSMutableDictionary {
-            return ProfileDocument(profile: profile, root: obj)
+            return ProfileDocument(profile: profile, root: obj, loadedData: data)
         }
         let seed = NSMutableDictionary()
         seed["profile_name"] = profile
@@ -82,6 +84,19 @@ final class ProfileDocument {
         (value(at: path) as? NSNumber)?.boolValue ?? false
     }
 
+    func isVaultReference(_ path: String) -> Bool {
+        var node: Any? = root
+        for part in path.split(separator: ".") {
+            if let dict = node as? NSDictionary {
+                if dict["$vault"] != nil { return true }
+                node = dict[String(part)]
+            } else if let array = node as? NSArray, let index = Int(part), index >= 0, index < array.count {
+                node = array[index]
+            } else { return false }
+        }
+        return (node as? NSDictionary)?["$vault"] != nil
+    }
+
     /// True when a leaf has a non-empty value.
     func isFilled(_ path: String) -> Bool {
         switch value(at: path) {
@@ -94,8 +109,11 @@ final class ProfileDocument {
     private func value(at path: String) -> Any? {
         var node: Any? = root
         for part in path.split(separator: ".") {
-            guard let dict = node as? NSDictionary else { return nil }
-            node = dict[String(part)]
+            if let dict = node as? NSDictionary {
+                node = dict[String(part)]
+            } else if let array = node as? NSArray, let index = Int(part), index >= 0, index < array.count {
+                node = array[index]
+            } else { return nil }
         }
         return node
     }
@@ -109,6 +127,7 @@ final class ProfileDocument {
     }
 
     private func setRaw(_ value: Any, at path: String) {
+        guard !isVaultReference(path) else { return }
         let parts = path.split(separator: ".").map(String.init)
         var node = root
         for part in parts.dropLast() {
@@ -152,10 +171,18 @@ final class ProfileDocument {
         data.append(0x0A) // trailing newline
 
         let url = ProfileStore.fileURL(for: profile)
-        let tmp = dir.appendingPathComponent(".\(profile).profile.json.tmp")
+        let current = try? Data(contentsOf: url)
+        guard current == loadedData else {
+            throw NSError(domain: "ProfileUse", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Profile changed outside this editor. Reload before saving to preserve the latest values and vault references."])
+        }
+        let tmp = dir.appendingPathComponent(".\(profile).\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: tmp) }
         FileManager.default.createFile(atPath: tmp.path, contents: nil, attributes: [.posixPermissions: 0o600])
         try data.write(to: tmp)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+        if current != nil { _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp) }
+        else { try FileManager.default.moveItem(at: tmp, to: url) }
+        loadedData = data
     }
 }

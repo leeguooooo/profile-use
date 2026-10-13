@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -186,8 +187,8 @@ def write_json(path: Path, data: Any) -> None:
     except OSError:
         pass
     payload = (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-    tmp = path.parent / f".{path.name}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
@@ -197,13 +198,188 @@ def write_json(path: Path, data: Any) -> None:
         raise
 
 
+def path_parts(dotted: str) -> list[str]:
+    canonical = re.sub(r"\[(0|[1-9][0-9]*)\]", r".\1", dotted)
+    parts = canonical.split(".")
+    if not parts or any(not part or "[" in part or "]" in part for part in parts):
+        raise ValueError("Invalid field path")
+    return parts
+
+
 def get_path(data: dict[str, Any], dotted: str) -> Any:
     current: Any = data
-    for part in dotted.split("."):
-        if not isinstance(current, dict) or part not in current:
+    for part in path_parts(dotted):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
             raise KeyError(dotted)
-        current = current[part]
     return current
+
+
+def replace_existing_path(data: dict[str, Any], dotted: str, value: Any) -> None:
+    parts = path_parts(dotted)
+    parent = data if len(parts) == 1 else get_path(data, ".".join(parts[:-1]))
+    last = parts[-1]
+    if isinstance(parent, dict) and last in parent:
+        parent[last] = value
+    elif isinstance(parent, list) and last.isdigit() and int(last) < len(parent):
+        parent[int(last)] = value
+    else:
+        raise ValueError("Cannot replace a missing field")
+
+
+def is_vault_ref(value: Any) -> bool:
+    return isinstance(value, dict) and "$vault" in value
+
+
+def vault_ref_spec(value: Any) -> dict[str, str]:
+    if not is_vault_ref(value) or set(value) != {"$vault"}:
+        raise VaultError("Invalid vault reference; no values were read")
+    spec = value["$vault"]
+    if not isinstance(spec, dict) or set(spec) - {"provider", "item", "field", "encoding"}:
+        raise VaultError("Invalid vault reference metadata")
+    if spec.get("provider", "bitwarden") != "bitwarden" or spec.get("encoding", "string") not in ("string", "json"):
+        raise VaultError("Unsupported vault provider or encoding")
+    try:
+        item = str(uuid.UUID(spec["item"]))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise VaultError("Vault references require an exact item UUID") from None
+    field = spec.get("field")
+    if not isinstance(field, str) or not field.strip() or field.startswith("-") or any(ord(c) < 32 for c in field):
+        raise VaultError("Vault references require an exact field name")
+    return {"provider":"bitwarden", "item":item, "field":field, "encoding":spec.get("encoding", "string")}
+
+
+def has_vault_refs(value: Any) -> bool:
+    if is_vault_ref(value):
+        return True
+    if isinstance(value, dict):
+        return any(has_vault_refs(child) for child in value.values())
+    if isinstance(value, list):
+        return any(has_vault_refs(child) for child in value)
+    return False
+
+
+def read_vault_reference(value: Any) -> Any:
+    spec = vault_ref_spec(value)
+    ensure_vault_unlocked()
+    flags = ["get", spec["item"], "--field", spec["field"]]
+    if _is_bitwarden_use():
+        flags.append("--reveal")
+    try:
+        result = _run_rbw_quiet(*flags, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        raise VaultError("Vault field unavailable; the reference was not replaced") from None
+    if result.returncode != 0:
+        # Vault errors can contain credential-bearing URLs or personal values.
+        raise VaultError("Vault field unavailable or access denied; check the selected item and unlock status")
+    raw = result.stdout[:-1] if result.stdout.endswith("\n") else result.stdout
+    if raw == "[redacted]":
+        raise VaultError("Vault returned a masked value; refusing to use it for filling")
+    if spec["encoding"] == "json":
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise VaultError("Vault field contains invalid JSON; no fallback value was used") from None
+    return raw
+
+
+def resolve_vault_refs(value: Any) -> Any:
+    if is_vault_ref(value):
+        return read_vault_reference(value)
+    if isinstance(value, dict):
+        return {key: resolve_vault_refs(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [resolve_vault_refs(child) for child in value]
+    return value
+
+
+def get_read_path(data: dict[str, Any], dotted: str, reveal: bool = False) -> Any:
+    """Read through a typed object/list reference only for an explicit reveal.
+
+    A masked descendant stays [vault] without probing the referenced value.
+    Mutation helpers keep using get_path, which never opens the vault.
+    """
+    current: Any = data
+    for part in path_parts(dotted):
+        if is_vault_ref(current):
+            if not reveal:
+                vault_ref_spec(current)
+                return current
+            current = read_vault_reference(current)
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            raise KeyError(dotted)
+    return resolve_vault_refs(current) if reveal else current
+
+
+def refresh_vault_cache() -> None:
+    ensure_vault_unlocked()
+    try:
+        result = _run_rbw_quiet("sync", timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        raise VaultError("Vault sync unavailable; local values were not changed") from None
+    if result.returncode:
+        raise VaultError("Vault sync failed; local values were not changed")
+
+
+def command_sync(args: argparse.Namespace) -> None:
+    import importlib.util
+    helper = Path(__file__).with_name("profile_vault_sync.py")
+    spec = importlib.util.spec_from_file_location("profile_vault_sync", helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source = args.file or profile_path(args.profile or "personal", args.directory)
+    profile = args.profile or (source.name.removesuffix(".profile.json") if args.file else "personal")
+    binary = rbw_binary()
+    if not binary or not _is_bitwarden_use():
+        raise VaultError("profile-use sync requires bitwarden-use")
+    previous = os.environ.get("PROFILE_SYNC_BWU")
+    os.environ["PROFILE_SYNC_BWU"] = binary
+    try:
+        module.synchronize(argparse.Namespace(file=source, profile=profile, folder=args.folder,
+                                             skip_attachments=args.skip_attachments, yes=args.yes, dry_run=args.dry_run))
+    except module.SyncError as error:
+        raise VaultError(str(error)) from None
+    except (ValueError, OSError, KeyError, TypeError):
+        raise VaultError("Profile sync stopped; validate source data and saved vault state. No values logged.") from None
+    finally:
+        if previous is None: os.environ.pop("PROFILE_SYNC_BWU", None)
+        else: os.environ["PROFILE_SYNC_BWU"] = previous
+
+
+def command_link_vault(args: argparse.Namespace) -> None:
+    data = load_profile(args.profile, args.directory)
+    original = get_path(data, args.field)
+    reference = {"$vault": {"provider":"bitwarden", "item":args.item, "field":args.vault_field, "encoding":args.encoding}}
+    reference = {"$vault": vault_ref_spec(reference)}
+    if is_vault_ref(original):
+        if vault_ref_spec(original) == reference["$vault"]:
+            print(json.dumps({"ok":True,"changed":False,"field":args.field}))
+            return
+        raise VaultError("Field already points to another vault reference; review it before changing")
+    refresh_vault_cache()
+    resolved = read_vault_reference(reference)
+    if type(resolved) is not type(original) or resolved != original:
+        raise VaultError("Local and vault values differ; local data was not changed")
+    print(json.dumps({"field":args.field,"verified":True,"dry_run":args.dry_run}), file=sys.stderr)
+    if args.dry_run:
+        return
+    if not args.yes:
+        if not sys.stdin.isatty() or input("Replace this verified local value with its vault reference? [y/N] ").lower() not in ("y", "yes"):
+            raise VaultError("Confirmation required; review --dry-run then use --yes")
+    # A second read guards against another process changing the profile during verification.
+    fresh = load_profile(args.profile, args.directory)
+    if get_path(fresh, args.field) != original:
+        raise VaultError("Profile changed during verification; review again")
+    replace_existing_path(fresh, args.field, reference)
+    write_json(profile_path(args.profile, args.directory), fresh)
+    print(json.dumps({"ok":True,"changed":True,"field":args.field,"storage":"bitwarden"}))
 
 
 def set_path(data: dict[str, Any], dotted: str, value: Any) -> None:
@@ -212,11 +388,15 @@ def set_path(data: dict[str, Any], dotted: str, value: Any) -> None:
         raise ValueError(f"Invalid field path: {dotted}")
     current: Any = data
     for part in parts[:-1]:
+        if is_vault_ref(current):
+            raise ValueError("Vault-linked fields must be edited in Bitwarden")
         if part not in current:
             current[part] = {}
         if not isinstance(current[part], dict):
             raise ValueError(f"Cannot set nested field under non-object path: {part}")
         current = current[part]
+    if is_vault_ref(current) or has_vault_refs(current.get(parts[-1])):
+        raise ValueError("Vault-linked fields must be edited in Bitwarden")
     current[parts[-1]] = value
 
 
@@ -245,6 +425,9 @@ def parse_value(raw: str, as_json: bool) -> Any:
 
 
 def iter_fields(data: Any, prefix: str = "") -> list[str]:
+    if is_vault_ref(data):
+        vault_ref_spec(data)
+        return [prefix] if prefix else []
     if not isinstance(data, dict):
         return [prefix] if prefix else []
     result: list[str] = []
@@ -259,6 +442,9 @@ def iter_fields(data: Any, prefix: str = "") -> list[str]:
 
 
 def redact_value(path: str, value: Any) -> Any:
+    if is_vault_ref(value):
+        vault_ref_spec(value)
+        return "[vault]"
     if isinstance(value, dict):
         return {key: redact_value(f"{path}.{key}" if path else key, val) for key, val in value.items()}
     if isinstance(value, list):
@@ -380,6 +566,9 @@ def rbw_binary() -> str | None:
     """bitwarden-use, else plain rbw (its upstream: same agent, database and
     subcommands). install.sh puts bitwarden-use in ~/.local/bin, which may not
     be on this process's PATH right after installing."""
+    delegated = os.environ.get("PROFILE_SYNC_BWU")
+    if delegated and Path(delegated).name == "bitwarden-use" and os.access(delegated, os.X_OK):
+        return delegated
     local = Path.home() / ".local" / "bin" / "bitwarden-use"
     return (
         shutil.which("bitwarden-use")
@@ -622,7 +811,9 @@ def command_doctor(args: argparse.Namespace) -> None:
 
 def command_show(args: argparse.Namespace) -> None:
     data = load_profile(args.profile, args.directory)
-    if not args.reveal:
+    if args.reveal:
+        data = resolve_vault_refs(data)
+    else:
         data = redact_value("", data)
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
@@ -632,11 +823,11 @@ def command_get(args: argparse.Namespace) -> None:
     result: dict[str, Any] = {}
     for field in args.fields:
         try:
-            value = get_path(data, field)
+            value = get_read_path(data, field, args.reveal)
         except KeyError:
             result[field] = None
             continue
-        result[field] = value if args.reveal else redact_value(field, value)
+        result[field] = resolve_vault_refs(value) if args.reveal else redact_value(field, value)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -709,7 +900,7 @@ def apply_value_formats(result: dict[str, Any], data: dict[str, Any], args: argp
     phone_mode = getattr(args, "phone_format", None)
     if phone_mode:
         try:
-            cc = get_path(data, "contact.phone_country_code")
+            cc = resolve_vault_refs(get_path(data, "contact.phone_country_code"))
         except KeyError:
             cc = None
         for path, value in list(result.items()):
@@ -733,7 +924,7 @@ def command_values(args: argparse.Namespace) -> None:
     if args.fields:
         for field in args.fields:
             try:
-                result[field] = get_path(data, field)
+                result[field] = get_read_path(data, field, True)
             except KeyError:
                 result[field] = None
     else:
@@ -741,6 +932,9 @@ def command_values(args: argparse.Namespace) -> None:
             if not args.include_sensitive and is_high_sensitivity(field):
                 continue
             value = get_path(data, field)
+            if has_vault_refs(value) and not args.include_sensitive:
+                continue
+            value = resolve_vault_refs(value)
             if value in ("", None, [], {}):
                 continue
             result[field] = value
@@ -1303,6 +1497,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     values.set_defaults(func=command_values)
 
+    sync = subparsers.add_parser("sync", help="Sync this profile and document backups to Bitwarden; vault-linked cards remain authoritative there.")
+    sync.add_argument("--profile")
+    sync.add_argument("--file", type=Path, help="Explicit profile JSON path")
+    sync.add_argument("--folder", default="profile-use")
+    sync.add_argument("--skip-attachments", action="store_true")
+    sync_options = sync.add_mutually_exclusive_group()
+    sync_options.add_argument("--dry-run", action="store_true")
+    sync_options.add_argument("--yes", action="store_true")
+    sync.set_defaults(func=command_sync)
+
+    link = subparsers.add_parser("link-vault", help="Verify a vault field equals a local value, then store an exact reference.")
+    link.add_argument("field")
+    link.add_argument("--item", required=True, help="Exact vault item UUID")
+    link.add_argument("--vault-field", required=True, help="Built-in field or custom:NAME")
+    link.add_argument("--encoding", choices=["string","json"], default="string")
+    link.add_argument("--profile", default="personal")
+    options = link.add_mutually_exclusive_group()
+    options.add_argument("--dry-run", action="store_true")
+    options.add_argument("--yes", action="store_true")
+    link.set_defaults(func=command_link_vault)
+
     set_cmd = subparsers.add_parser("set", help="Set a dot-path field, creating nested objects as needed.")
     set_cmd.add_argument("field")
     set_cmd.add_argument("value")
@@ -1458,6 +1673,12 @@ def leak_needles(data: Any) -> dict[str, str]:
             needles.setdefault(needle, path)
 
     def walk(value: Any, path: str) -> None:
+        if is_vault_ref(value):
+            # Provider/field/encoding are protocol metadata, not personal values.
+            # Keep private item UUIDs in the scan without opening the vault.
+            spec = vault_ref_spec(value)
+            add(_leak_normalize(spec["item"]), path + ".$vault.item")
+            return
         if isinstance(value, dict):
             for key, item in value.items():
                 walk(item, f"{path}.{key}" if path else key)

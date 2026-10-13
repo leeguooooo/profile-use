@@ -2,6 +2,40 @@
 
 Use this guide when deciding where profile data should live.
 
+## Data ownership
+
+| Example | Workflow owner | Authoritative value |
+| --- | --- | --- |
+| Address, furigana, housing preferences, residence-renewal checklist | profile-use | Private profile and local documents |
+| Personal card, identity or bank account | profile-use | Ordinary metadata in the profile; secret number in Bitwarden |
+| NAS topology, SSH connection instructions, troubleshooting decisions | memory-use | Private technical notes |
+| Login password, API token, passkey, SSH private key | bitwarden-use | Vault entry |
+
+Sensitivity decides where a value is stored; purpose decides which workflow reads it.
+Do not maintain two editable sources for the same secret. Backups retain historical
+values and are not authoritative for daily reads. Bitwarden stores secrets but does
+not replace profile-use's field mapping, regional formatting or consent workflow.
+
+## Vault references and backup
+
+`profile_use.py link-vault FIELD --item UUID --vault-field FIELD --dry-run` checks a
+local value against a freshly synced vault field. `--yes` replaces the matching
+local value with a `$vault` reference. No plaintext cache is retained in the profile.
+Use `--encoding json` for typed JSON custom fields. Default masked reads show
+`[vault]` without contacting the vault; explicit reads use its existing unlock,
+reveal and audit policy. Failed reads have no plaintext fallback.
+
+`profile_use.py sync --profile personal --dry-run` previews a one-way verified
+backup. `--yes` stores profile JSON and original documents in the vault. References
+stay references; linked native cards are not written back from profile metadata.
+The old `bwu profile sync FILE` delegates here. Existing unlinked native projections
+and snapshots are copies. Neither command merges edits from two stores.
+
+Original documents remain local for form uploads; the vault holds verified encrypted
+backup copies. A document image can still contain an ID or card number after its
+extracted text field is linked. Linking changes the JSON field, not the image or
+historical backups. Restore and access policy for those copies remain separate.
+
 ## Recommended Default: iCloud Drive
 
 iCloud Drive is the best default for a single Apple user because it syncs across the user's own Macs, stays outside Git history, and works with normal local file reads.

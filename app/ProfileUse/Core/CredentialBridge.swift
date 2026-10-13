@@ -23,9 +23,9 @@ struct LoginResult: Codable, Equatable {
     let candidates: [Candidate]?
 }
 
-/// Reads login credentials live from the vault via the bundled `profile_use.py`.
-/// The GUI NEVER stores credentials, never asks for the vault master password,
-/// and never runs `bitwarden-use login`/`unlock` itself — it surfaces the command.
+/// Reads credentials and linked fields via the bundled profile helper, which
+/// delegates unlock/reveal policy to bitwarden-use. The GUI never receives or
+/// stores the vault master password; revealed field values stay in session memory.
 actor CredentialBridge {
     static let shared = CredentialBridge()
 
@@ -66,8 +66,9 @@ actor CredentialBridge {
         let outPipe = Pipe(); let errPipe = Pipe()
         process.standardOutput = outPipe; process.standardError = errPipe
         try process.run()
-        let out = await readToEnd(outPipe.fileHandleForReading)
-        _ = await readToEnd(errPipe.fileHandleForReading)
+        async let output = readToEnd(outPipe.fileHandleForReading)
+        async let errors = readToEnd(errPipe.fileHandleForReading)
+        let (out, _) = await (output, errors)
         process.waitUntilExit()
         return (process.terminationStatus, out)
     }
@@ -81,6 +82,18 @@ actor CredentialBridge {
     func vaultStatus() async throws -> VaultStatus {
         let r = try await run(["vault-status"])
         return try decoder.decode(VaultStatus.self, from: r.stdout)
+    }
+
+    func profileValue(profile: String, path: String) async throws -> String {
+        let r = try await run(["get", "--profile", profile, path, "--reveal"])
+        guard r.status == 0,
+              let object = try? JSONSerialization.jsonObject(with: r.stdout) as? [String: Any],
+              let value = object[path], !(value is NSNull) else {
+            throw CredError.lookup("Vault field could not be read. Check the reference and complete any vault authorization prompt.")
+        }
+        if let text = value as? String { return text }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys])
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// Look up a credential. `reveal: true` returns the raw password (call only

@@ -10,6 +10,10 @@ One private profile. Every signup form. An agent skill that fills registration, 
 
 Part of the `*-use` family (`iphone-use`, browser automation, computer use): those skills drive the device, **profile-use is what they fill the forms with**.
 
+Personal facts and form workflows belong here. Infrastructure and runbooks belong
+to memory-use. Secret values belong to Bitwarden; profile fields can hold exact
+vault references and resolve them when needed. See [data ownership and sync](references/sync-model.md).
+
 ## "Is my data going to leak?"
 
 <p align="center">
@@ -41,7 +45,7 @@ Honest answer — there are three channels, and they are not equally safe:
 
 | Channel | What it sees | Verdict |
 | --- | --- | --- |
-| The helper script (`scripts/profile_use.py`) | Local file I/O only. One file, zero network code — audit it yourself. | Nothing ever leaves your machine through the script. |
+| The helper script (`scripts/profile_use.py`) | Local profile I/O; explicit vault reads and `sync` delegate to bitwarden-use. | Vault synchronization sends locally encrypted data to your configured Bitwarden/Vaultwarden server. |
 | The model provider (Claude / OpenAI / ...) | Values the agent reads DO enter the conversation context and are sent to the model API over TLS. This is inherent to any LLM-driven autofill. | As trustworthy as your provider's API data policy (major providers don't train on API traffic by default). Redaction-by-default keeps most of the session masked; raw values are fetched per-field, only at the moment of filling. |
 | **Third-party API relays (中转站 / resellers / proxies)** | The **full plaintext** of every request, including any raw value the agent reads. | **Don't.** If you route your agent through a relay you wouldn't hand your ID card to, this skill cannot protect you. Use official endpoints, an enterprise gateway you control, or a locally-hosted model. |
 

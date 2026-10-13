@@ -1,11 +1,40 @@
 ---
 name: profile-use
-description: "Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. Also use whenever a task hits a login wall: sign in proactively with the Bitwarden vault (bitwarden-use) and finish 2FA with SMS codes (message-use) or email codes and magic links (mail-use) instead of asking the user to log in. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git. Also use leak-scan before committing to any repo that might echo personal data. Not for infra/NAS/VPN notes or \"how did we do X\" history — that is memory-use."
+description: "Safely use a user's private local personal profile to help fill registration, signup, checkout, banking, KYC, and onboarding forms. Use when the user asks to enter or reuse identity details such as name, address, phone, postal code, email, birthdate, payment card, bank account, tax ID, or other personal data. For authentication needed by a personal form workflow, delegate credentials to bitwarden-use and verification codes to message-use or mail-use. General vault and site-login tasks belong to bitwarden-use and the browser skill. Prioritize privacy, redaction, consent before submission, and local/iCloud/encrypted profile sources rather than storing personal data in chat or Git. Also use leak-scan before committing to any repo that might echo personal data. Not for infra/NAS/VPN notes or \"how did we do X\" history — that is memory-use."
 ---
 
 # Profile Use
 
 Use a private profile as the source of truth for repetitive registration and checkout fields. The skill helps map form labels to profile fields, fill only what is needed, and keep sensitive values out of chat, logs, screenshots, repos, and PRs.
+
+## Ownership and routing
+
+| Task or data | Owner | Authoritative storage |
+| --- | --- | --- |
+| Personal facts, addresses, housing, assets, application preparation, form mapping | profile-use | Private profile files and documents |
+| Infrastructure, machine configuration, runbooks, technical decisions and troubleshooting history | memory-use | Private portable Markdown notes |
+| Passwords, passkeys, recovery codes, SSH private keys, card/CVV, identity and account numbers | bitwarden-use | Bitwarden/Vaultwarden entries |
+
+Choose the workflow by purpose, then resolve secret fields from the vault. A personal bank account still belongs to the profile workflow; its account number can be a vault reference. A server runbook belongs to memory-use; its password belongs to the vault. Do not copy personal facts into memory-use or secrets into either local store. A vault backup is a backup, not a second editable source.
+
+Profile sync and personal field policies live here. bitwarden-use handles generic vault reads/writes, encryption, attachments and unlock policy. `bwu profile sync` is a compatibility alias for this skill's `sync` command.
+
+### Vault-backed fields
+
+Existing plaintext profiles remain supported. To replace a local field, first save its exact value in the vault, then verify and link it:
+
+```sh
+python3 scripts/profile_use.py link-vault payment.card.number --item ITEM_UUID --vault-field number --dry-run
+python3 scripts/profile_use.py link-vault payment.card.number --item ITEM_UUID --vault-field number --yes
+python3 scripts/profile_use.py sync --profile personal --dry-run
+python3 scripts/profile_use.py sync --profile personal --yes
+```
+
+`link-vault` syncs the vault and requires the fetched value and type to equal the local field before replacing it. It accepts exact UUIDs, never item names. Use `--encoding json` for typed JSON values in custom fields. The profile stores only `{"$vault":{"provider":"bitwarden","item":"UUID","field":"number","encoding":"string"}}`. Array paths accept `bank.accounts[0].account_number` or `bank.accounts.0.account_number`.
+
+`show`/`get` display `[vault]` without unlocking. Explicit `values FIELD` or `get FIELD --reveal` resolves the reference under the vault's normal authorization and audit rules. Default bulk `values` skips references. Missing entries, denied reveals and malformed references stop the read; there is no plaintext fallback. Never edit `$vault.item` or `$vault.field` as ordinary profile data. Update the secret in Bitwarden. The editor keeps linked fields read-only and reads them only on explicit reveal/copy.
+
+`sync` backs up the JSON and original document files, with readback verification. Linked values remain references in the backup; native linked cards are not overwritten by profile sync. Legacy plaintext projections are copies until explicitly linked. This is one-way backup, not two-way conflict resolution. Existing vault snapshots can still contain historical values.
 
 ## Privacy Rules
 
@@ -196,9 +225,9 @@ Rules for originals:
 4. Do not attach one-time documents (CAPTCHAs, QR codes, temporary passes). Attach stable identity/payment documents only.
 5. Expired or surrendered documents: `detach` them, or replace with `attach --force` when a renewed card arrives.
 
-## Logging In (proactive)
+## Authentication during a profile workflow
 
-When a task runs into a login wall (a sign-in page, an expired session, a 401, "please log in to continue"), **log in yourself and carry on**. Do not stop to ask the user to log in, and do not hand them the steps. The user stored the password in their vault, their SMS reaches this Mac, and their email is readable, all so that the agent can do this.
+When an authorized personal form task runs into a login wall (a sign-in page, an expired session, a 401, "please log in to continue"), **log in yourself and carry on**. Do not stop to ask the user to log in, and do not hand them the steps. The user stored the password in their vault, their SMS reaches this Mac, and their email is readable, all so that the agent can do this.
 
 Account passwords do **not** live in the profile JSON. They stay in the user's vault and are read live through `bitwarden-use` (`bwu`). Second-factor codes come from `message-use` (SMS) and `mail-use` (email). Nothing from a login is ever written to the profile, memory, logs, a temp file, or chat.
 

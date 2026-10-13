@@ -8,6 +8,7 @@ final class ProfileModel: ObservableObject {
     @Published var profiles: [String]
     @Published var activeProfile: String
     @Published var revealed: Set<String> = []
+    @Published private var vaultValues: [String: String] = [:]
     @Published var dirty = false
     @Published var lastError: String?
     @Published var lastMessage: String?
@@ -30,6 +31,7 @@ final class ProfileModel: ObservableObject {
         activeProfile = name
         doc = ProfileDocument.load(profile: name)
         revealed = []
+        vaultValues = [:]
         dirty = false
         docVersion += 1
     }
@@ -52,9 +54,11 @@ final class ProfileModel: ObservableObject {
     func bool(_ path: String) -> Bool { doc.bool(path) }
     func isFilled(_ path: String) -> Bool { doc.isFilled(path) }
     func isRevealed(_ path: String) -> Bool { revealed.contains(path) }
+    func isVaultReference(_ path: String) -> Bool { doc.isVaultReference(path) }
 
     /// Value to show, honoring redaction tier + per-session reveal state.
     func display(_ path: String, _ sensitivity: Sensitivity) -> String {
+        if doc.isVaultReference(path) { return vaultValues[path] ?? "Stored in Bitwarden" }
         let raw = doc.string(path)
         if raw.isEmpty { return "" }
         if sensitivity == .low || revealed.contains(path) { return raw }
@@ -87,11 +91,13 @@ final class ProfileModel: ObservableObject {
     // MARK: Writes
 
     func setString(_ value: String, at path: String) {
+        guard !doc.isVaultReference(path) else { return }
         guard value != doc.string(path) else { return }
         doc.setString(value, at: path); dirty = true
     }
 
     func setBool(_ value: Bool, at path: String) {
+        guard !doc.isVaultReference(path) else { return }
         guard value != doc.bool(path) else { return }
         doc.setBool(value, at: path); dirty = true
     }
@@ -104,13 +110,23 @@ final class ProfileModel: ObservableObject {
     // MARK: Reveal / copy (high-sensitivity gated by Touch ID)
 
     func reveal(_ path: String, _ sensitivity: Sensitivity) async {
-        if sensitivity == .high {
+        let profile = activeProfile
+        let version = docVersion
+        if sensitivity == .high || doc.isVaultReference(path) {
             guard await BiometricGate.confirm(reason: "Reveal “\(path)”") else { return }
+        }
+        guard activeProfile == profile, docVersion == version else { return }
+        if doc.isVaultReference(path) {
+            do {
+                let value = try await CredentialBridge.shared.profileValue(profile: profile, path: path)
+                guard activeProfile == profile, docVersion == version else { return }
+                vaultValues[path] = value
+            } catch { lastError = error.localizedDescription; return }
         }
         revealed.insert(path)
     }
 
-    func hide(_ path: String) { revealed.remove(path) }
+    func hide(_ path: String) { revealed.remove(path); vaultValues.removeValue(forKey: path) }
 
     // MARK: rbw / Bitwarden credential lookup (read live, never stored)
 
@@ -147,11 +163,17 @@ final class ProfileModel: ObservableObject {
     }
 
     func copy(_ path: String, _ sensitivity: Sensitivity) async {
-        let raw = doc.string(path)
-        guard !raw.isEmpty else { return }
-        if sensitivity == .high {
+        let profile = activeProfile
+        let version = docVersion
+        let linked = doc.isVaultReference(path)
+        if sensitivity == .high || linked {
             guard await BiometricGate.confirm(reason: "Copy “\(path)”") else { return }
         }
+        guard activeProfile == profile, docVersion == version else { return }
+        let raw: String
+        do { raw = linked ? try await CredentialBridge.shared.profileValue(profile: profile, path: path) : doc.string(path) }
+        catch { lastError = error.localizedDescription; return }
+        guard activeProfile == profile, docVersion == version, !raw.isEmpty else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(raw, forType: .string)
