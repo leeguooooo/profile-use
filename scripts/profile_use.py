@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -164,6 +165,35 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# iCloud Drive / File Provider can fail a read while the file is being
+# materialized. On macOS that surfaces as errno 11, which is EDEADLK there
+# (EAGAIN is 35); EAGAIN is the same condition under its usual name. Anything
+# else, such as a permission error, is not transient and is never retried.
+TRANSIENT_READ_ERRNOS = frozenset({errno.EDEADLK, errno.EAGAIN})
+# Waits between the attempts, so one more attempt than there are delays.
+READ_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
+
+
+def read_profile_text(path: Path) -> str:
+    """Read a profile, retrying transient File Provider failures. Fails closed:
+    when retries run out it stops rather than falling back to another copy."""
+    for delay in (*READ_RETRY_DELAYS, None):
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            if exc.errno not in TRANSIENT_READ_ERRNOS:
+                raise
+            if delay is None:
+                raise SystemExit(
+                    f"Profile is not readable yet: {path}\n"
+                    f"iCloud has not made the file available ({errno.errorcode[exc.errno]}, "
+                    f"{len(READ_RETRY_DELAYS) + 1} attempts).\n"
+                    "Download it in Finder or retry shortly."
+                ) from exc
+            time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def load_profile(profile: str, directory: Path | None = None) -> dict[str, Any]:
     path = profile_path(profile, directory)
     if not path.exists():
@@ -172,7 +202,7 @@ def load_profile(profile: str, directory: Path | None = None) -> dict[str, Any]:
             f"Create it with: {Path(sys.argv[0]).name} init --profile {profile}"
         )
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(read_profile_text(path))
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
@@ -1771,7 +1801,7 @@ def command_leak_scan(args: argparse.Namespace) -> None:
         raise SystemExit(2)
     needles: dict[str, str] = {}
     for file in files:
-        for needle, path in leak_needles(json.loads(file.read_text(encoding="utf-8"))).items():
+        for needle, path in leak_needles(json.loads(read_profile_text(file))).items():
             needles.setdefault(needle, f"{file.name.removesuffix('.profile.json')}:{path}")
     patterns = _leak_patterns(needles)
 

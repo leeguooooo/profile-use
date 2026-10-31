@@ -2,6 +2,7 @@
 """Smoke + redaction tests. Run: python3 tests/test_profile_use.py"""
 
 import argparse
+import errno
 import importlib.util
 import io
 import json
@@ -16,6 +17,60 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 pa = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(pa)
+
+
+class TransientReadTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory = Path(tmp.name)
+        self.path = self.directory / "personal.profile.json"
+        self.path.write_text('{"identity": {"nickname": "ok"}}', encoding="utf-8")
+
+    def load_with_failures(self, *failures):
+        real = Path.read_text
+        queue = list(failures)
+        self.calls = 0
+
+        def flaky(path, *args, **kwargs):
+            self.calls += 1
+            if queue:
+                raise queue.pop(0)
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", flaky), \
+                mock.patch.object(pa.time, "sleep") as self.sleep:
+            return pa.load_profile("personal", self.directory)
+
+    def test_two_transient_failures_then_success(self):
+        for code in (errno.EDEADLK, errno.EAGAIN):
+            with self.subTest(code=code):
+                data = self.load_with_failures(OSError(code, "busy"), OSError(code, "busy"))
+                self.assertEqual(data["identity"]["nickname"], "ok")
+                self.assertEqual(self.calls, 3)
+                self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [0.25, 0.5])
+
+    def test_retry_exhaustion_is_actionable_and_bounded(self):
+        attempts = len(pa.READ_RETRY_DELAYS) + 1
+        failures = [OSError(errno.EDEADLK, "busy") for _ in range(attempts + 1)]
+        with self.assertRaises(SystemExit) as caught:
+            self.load_with_failures(*failures)
+        self.assertEqual(self.calls, attempts)
+        self.assertIn("Download it in Finder", str(caught.exception.code))
+        self.assertIn(str(self.path), str(caught.exception.code))
+
+    def test_permission_error_is_not_retried(self):
+        with self.assertRaises(PermissionError):
+            self.load_with_failures(PermissionError(errno.EACCES, "denied"))
+        self.assertEqual(self.calls, 1)
+        self.sleep.assert_not_called()
+
+    def test_malformed_json_is_not_retried(self):
+        self.path.write_text("{not json", encoding="utf-8")
+        with self.assertRaises(SystemExit) as caught:
+            self.load_with_failures()
+        self.assertIn("Invalid JSON", str(caught.exception.code))
+        self.assertEqual(self.calls, 1)
 
 
 class RedactionTests(unittest.TestCase):
