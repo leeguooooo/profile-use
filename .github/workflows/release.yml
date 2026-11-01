@@ -1,0 +1,171 @@
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag with no release yet (retries a failed build)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests
+      - run: sh -n install.sh && sh -n install-app.sh && sh -n scripts/release.sh && bash -n app/build-dmg.sh
+
+  prepare-release:
+    needs: test
+    runs-on: macos-26
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      # Before anything is tagged, so missing secrets cannot strand a version.
+      - name: Require signing secrets
+        env:
+          A: ${{ secrets.APPLE_SIGNING_CERTIFICATE }}
+          B: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          C: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          D: ${{ secrets.APPLE_API_KEY_P8 }}
+          E: ${{ secrets.APPLE_API_KEY_ID }}
+          F: ${{ secrets.APPLE_API_ISSUER_ID }}
+          G: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in A B C D E F G; do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error::an APPLE_* secret is missing; refusing to release"
+              exit 1
+            fi
+          done
+          [ "$G" = 6ZPXG4KVVS ] || { echo "::error::APPLE_TEAM_ID is not the release team"; exit 1; }
+      - name: Bump version and tag releasable commits
+        id: prepare
+        env:
+          TESTED_SHA: ${{ github.sha }}
+          RETRY_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          if [ -n "$RETRY_TAG" ]; then
+            [[ "$RETRY_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            git rev-parse -q --verify "refs/tags/$RETRY_TAG" >/dev/null
+            if gh release view "$RETRY_TAG" >/dev/null 2>&1; then
+              echo "::error::$RETRY_TAG already has a release"
+              exit 1
+            fi
+            echo "tag=$RETRY_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(git rev-parse origin/main)" != "$TESTED_SHA" ]; then
+            echo "Newer main commit exists; its run will prepare the release"
+            exit 0
+          fi
+          tag="$(python3 scripts/prepare-release.py)"
+          if [ -z "$tag" ]; then
+            echo "No releasable commits since the last tag"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -u
+          git commit -m "chore(release): $tag"
+          git tag "$tag"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.tag != ''
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare-release.outputs.tag }}
+      KEYCHAIN: ${{ runner.temp }}/release.keychain-db
+      TEAM_ID: 6ZPXG4KVVS
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          persist-credentials: false
+      - name: Import signing certificate into a temporary keychain
+        env:
+          P12: ${{ secrets.APPLE_SIGNING_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          SIGN_ID: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf %s "$P12" | base64 -D > "$RUNNER_TEMP/release.p12"
+          printf %s "$KEY_P8" | base64 -D > "$RUNNER_TEMP/notary.p8"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/release.p12" -k "$KEYCHAIN" -f pkcs12 \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -qF "$SIGN_ID" \
+            || { echo "::error::signing identity not found in the imported certificate"; exit 1; }
+          rm -f "$RUNNER_TEMP/release.p12"
+      - name: Build, sign, notarize and staple
+        env:
+          SIGN_ID: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: NOTARY_KEY="$RUNNER_TEMP/notary.p8" app/build-dmg.sh
+      - name: Verify the build before publishing
+        run: |
+          set -euo pipefail
+          cd app/build
+          shasum -a 256 -c ProfileUse.dmg.sha256 ProfileUse-macos.tar.gz.sha256
+          xcrun stapler validate ProfileUse.dmg
+          spctl --assess --type open --context context:primary-signature ProfileUse.dmg
+          codesign -dvv ProfileUse.dmg 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
+          mount="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" ProfileUse.dmg >/dev/null
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          xcrun stapler validate "$mount/ProfileUse.app"
+          spctl --assess --type execute "$mount/ProfileUse.app"
+          codesign -dvv "$mount/ProfileUse.app" 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
+          version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$mount/ProfileUse.app/Contents/Info.plist")"
+          test "$TAG" = "v$version"
+      # Draft first: `latest` only moves once all four assets are in place.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --verify-tag --draft --title "ProfileUse $TAG" --generate-notes \
+            app/build/ProfileUse.dmg app/build/ProfileUse.dmg.sha256 \
+            app/build/ProfileUse-macos.tar.gz app/build/ProfileUse-macos.tar.gz.sha256
+          gh release edit "$TAG" --draft=false --latest
+      - name: Remove temporary keychain and API key
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/release.p12"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build ProfileUse.app (Release) and package it for GitHub Releases.
 #
-# With SIGN_ID and NOTARY_PROFILE set (what scripts/release.sh requires) the app is
+# With SIGN_ID and notary credentials set (what scripts/release.sh requires) the app is
 # Developer ID signed with the hardened runtime, notarized and stapled, and the
 # outputs are:
 #   build/ProfileUse.dmg (+ .sha256)              install-app.sh / manual install
@@ -10,6 +10,8 @@
 #
 #   SIGN_ID="Developer ID Application: LI GUO (6ZPXG4KVVS)"
 #   NOTARY_PROFILE=<xcrun notarytool store-credentials profile> [NOTARY_KEYCHAIN=<keychain path>]
+# or, without a keychain profile (CI), an App Store Connect API key:
+#   NOTARY_KEY=<AuthKey .p8 path> NOTARY_KEY_ID=<key id> NOTARY_ISSUER=<issuer id>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,19 +27,28 @@ TEAM_ID="6ZPXG4KVVS"
 SIGN_ID="${SIGN_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
+NOTARY_KEY="${NOTARY_KEY:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 
 if command -v xcodegen >/dev/null; then ( cd "${SCRIPT_DIR}" && xcodegen generate >/dev/null ); fi
 mkdir -p "${OUT}"
 rm -rf "${APP}" "${DMG}" "${DMG}.sha256" "${TARBALL}" "${TARBALL}.sha256"
 
 notarize() {
-	local args=(--keychain-profile "${NOTARY_PROFILE}" --wait)
-	[[ -n "${NOTARY_KEYCHAIN}" ]] && args+=(--keychain "${NOTARY_KEYCHAIN}")
+	local args=(--wait)
+	if [[ -n "${NOTARY_KEY}" ]]; then
+		args+=(--key "${NOTARY_KEY}" --key-id "${NOTARY_KEY_ID}" --issuer "${NOTARY_ISSUER}")
+	else
+		args+=(--keychain-profile "${NOTARY_PROFILE}")
+		[[ -n "${NOTARY_KEYCHAIN}" ]] && args+=(--keychain "${NOTARY_KEYCHAIN}")
+	fi
 	xcrun notarytool submit "$1" "${args[@]}"
 }
 
 if [[ -n "${SIGN_ID}" ]]; then
-	[[ -n "${NOTARY_PROFILE}" ]] || { echo "error: SIGN_ID needs NOTARY_PROFILE (xcrun notarytool store-credentials)" >&2; exit 1; }
+	[[ -n "${NOTARY_PROFILE}" || ( -n "${NOTARY_KEY}" && -n "${NOTARY_KEY_ID}" && -n "${NOTARY_ISSUER}" ) ]] \
+		|| { echo "error: SIGN_ID needs NOTARY_PROFILE or NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER" >&2; exit 1; }
 	xcodebuild -project "${PROJECT}" -scheme "${SCHEME}" -configuration Release \
 		-destination 'platform=macOS' -derivedDataPath "${DERIVED}" CODE_SIGNING_ALLOWED=NO build >/dev/null
 	ditto "${DERIVED}/Build/Products/Release/${APP_NAME}.app" "${APP}"

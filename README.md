@@ -205,7 +205,7 @@ mv "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Agent Profiles/personal-a
 export PROFILE_USE_DIR="..."   # was PERSONAL_AUTOFILL_DIR
 ```
 
-Maintainers: `SIGN_ID="Developer ID Application: …" NOTARY_PROFILE=<notarytool profile> scripts/release.sh <version> [notes.md]` bumps the app version, builds a Developer ID signed, notarized `ProfileUse.dmg` plus the `ProfileUse-macos.tar.gz` the app updates itself from (each with a `.sha256`), publishes the release, then syncs the plugin marketplace. The menu bar app checks for updates at launch, hourly and after wake (at most once a day) and installs them in place after verifying the checksum, this team's Developer ID signature and notarization.
+Maintainers: every push to `main` with a `feat` or `fix` commit since the last tag releases automatically (`.github/workflows/release.yml`). To release by hand: `SIGN_ID="Developer ID Application: …" NOTARY_PROFILE=<notarytool profile> scripts/release.sh <version> [notes.md]` bumps the app version, builds a Developer ID signed, notarized `ProfileUse.dmg` plus the `ProfileUse-macos.tar.gz` the app updates itself from (each with a `.sha256`), publishes the release, then syncs the plugin marketplace. The menu bar app checks for updates at launch, hourly and after wake (at most once a day) and installs them in place after verifying the checksum, this team's Developer ID signature and notarization.
 
 ## Why do the illustrations look like that
 
