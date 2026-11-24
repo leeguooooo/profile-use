@@ -27,7 +27,7 @@ class TransientReadTests(unittest.TestCase):
         self.path = self.directory / "personal.profile.json"
         self.path.write_text('{"identity": {"nickname": "ok"}}', encoding="utf-8")
 
-    def load_with_failures(self, *failures):
+    def load_with_failures(self, *failures, download_ok=False):
         real = Path.read_text
         queue = list(failures)
         self.calls = 0
@@ -39,8 +39,36 @@ class TransientReadTests(unittest.TestCase):
             return real(path, *args, **kwargs)
 
         with mock.patch.object(Path, "read_text", flaky), \
-                mock.patch.object(pa.time, "sleep") as self.sleep:
+                mock.patch.object(pa.time, "sleep") as self.sleep, \
+                mock.patch.object(pa, "request_icloud_download",
+                                  return_value=download_ok) as self.download:
             return pa.load_profile("personal", self.directory)
+
+    def test_evicted_file_is_downloaded_once_then_read(self):
+        data = self.load_with_failures(OSError(errno.EDEADLK, "busy"), download_ok=True)
+        self.assertEqual(data["identity"]["nickname"], "ok")
+        self.assertEqual(self.calls, 2)
+        self.download.assert_called_once_with(self.path)
+        self.sleep.assert_not_called()
+
+    def test_download_requested_only_once_across_retries(self):
+        attempts = len(pa.READ_RETRY_DELAYS) + 1
+        failures = [OSError(errno.EDEADLK, "busy") for _ in range(attempts)]
+        with self.assertRaises(SystemExit):
+            self.load_with_failures(*failures, download_ok=True)
+        self.assertEqual(self.calls, attempts)
+        self.download.assert_called_once()
+
+    def test_brctl_missing_or_failing_is_harmless(self):
+        with mock.patch.object(pa.shutil, "which", return_value=None):
+            self.assertFalse(pa.request_icloud_download(self.path))
+        with mock.patch.object(pa.shutil, "which", return_value="/usr/bin/brctl"), \
+                mock.patch.object(pa.subprocess, "run", side_effect=OSError("boom")):
+            self.assertFalse(pa.request_icloud_download(self.path))
+        with mock.patch.object(pa.shutil, "which", return_value="/usr/bin/brctl"), \
+                mock.patch.object(pa.subprocess, "run",
+                                  side_effect=pa.subprocess.TimeoutExpired("brctl", 30)):
+            self.assertFalse(pa.request_icloud_download(self.path))
 
     def test_two_transient_failures_then_success(self):
         for code in (errno.EDEADLK, errno.EAGAIN):
@@ -49,6 +77,7 @@ class TransientReadTests(unittest.TestCase):
                 self.assertEqual(data["identity"]["nickname"], "ok")
                 self.assertEqual(self.calls, 3)
                 self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [0.25, 0.5])
+                self.download.assert_called_once_with(self.path)
 
     def test_retry_exhaustion_is_actionable_and_bounded(self):
         attempts = len(pa.READ_RETRY_DELAYS) + 1

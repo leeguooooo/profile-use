@@ -166,29 +166,58 @@ def sha256_file(path: Path) -> str:
 
 
 # iCloud Drive / File Provider can fail a read while the file is being
-# materialized. On macOS that surfaces as errno 11, which is EDEADLK there
+# materialized, or when macOS has evicted it to save space (a "dataless"
+# placeholder). On macOS that surfaces as errno 11, which is EDEADLK there
 # (EAGAIN is 35); EAGAIN is the same condition under its usual name. Anything
 # else, such as a permission error, is not transient and is never retried.
 TRANSIENT_READ_ERRNOS = frozenset({errno.EDEADLK, errno.EAGAIN})
 # Waits between the attempts, so one more attempt than there are delays.
-READ_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
+READ_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0, 4.0)
+ICLOUD_DOWNLOAD_TIMEOUT = 30
+
+
+def request_icloud_download(path: Path) -> bool:
+    """Ask iCloud to materialize an evicted file (`brctl download`). Best effort:
+    returns False when brctl is missing or fails, and never raises."""
+    brctl = shutil.which("brctl")
+    if not brctl:
+        return False
+    try:
+        result = subprocess.run(
+            [brctl, "download", str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=ICLOUD_DOWNLOAD_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def read_profile_text(path: Path) -> str:
-    """Read a profile, retrying transient File Provider failures. Fails closed:
-    when retries run out it stops rather than falling back to another copy."""
+    """Read a profile, retrying transient File Provider failures. After the first
+    failure it asks iCloud to download the file once. Fails closed: when retries
+    run out it stops rather than falling back to another copy."""
+    download_requested = False
     for delay in (*READ_RETRY_DELAYS, None):
         try:
             return path.read_text(encoding="utf-8")
         except OSError as exc:
             if exc.errno not in TRANSIENT_READ_ERRNOS:
                 raise
+            if not download_requested:
+                download_requested = True
+                if request_icloud_download(path):
+                    continue
             if delay is None:
                 raise SystemExit(
                     f"Profile is not readable yet: {path}\n"
                     f"iCloud has not made the file available ({errno.errorcode[exc.errno]}, "
-                    f"{len(READ_RETRY_DELAYS) + 1} attempts).\n"
-                    "Download it in Finder or retry shortly."
+                    f"{len(READ_RETRY_DELAYS) + 1} attempts, brctl download tried).\n"
+                    "Download it in Finder or retry shortly. To stop macOS evicting it, "
+                    "right-click the profile folder in Finder and choose Keep Downloaded."
                 ) from exc
             time.sleep(delay)
     raise AssertionError("unreachable")
